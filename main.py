@@ -51,9 +51,9 @@ class StrokeApp(QMainWindow):
         self.lbl_skel, self.cont_skel = self.img_box("KHUNG XƯƠNG MẠCH")
         self.lbl_final, self.cont_final = self.img_box("BẢN ĐỒ LÂM SÀNG (FOV)")
 
-        grid_imgs.addWidget(self.cont_en, 0, 0);
+        grid_imgs.addWidget(self.cont_en, 0, 0)
         grid_imgs.addWidget(self.cont_mask, 0, 1)
-        grid_imgs.addWidget(self.cont_skel, 1, 0);
+        grid_imgs.addWidget(self.cont_skel, 1, 0)
         grid_imgs.addWidget(self.cont_final, 1, 1)
         center_panel.addLayout(grid_imgs)
         main_layout.addLayout(center_panel, 3)
@@ -61,7 +61,7 @@ class StrokeApp(QMainWindow):
         # --- CỘT 3: 6 CHỈ SỐ & KẾT LUẬN ---
         result_panel = QVBoxLayout()
 
-        # KHÔI PHỤC BẢNG 6 CHỈ SỐ
+        # BẢNG 6 CHỈ SỐ
         self.table = QTableWidget(6, 3)
         self.table.setHorizontalHeaderLabels(["Chỉ số", "Giá trị", "Tham chiếu"])
         self.table.setStyleSheet("QTableWidget { background: #1e293b; color: white; border-radius: 10px; }")
@@ -70,7 +70,7 @@ class StrokeApp(QMainWindow):
         result_panel.addWidget(QLabel("<b style='color: white;'>THÔNG SỐ ĐỊNH LƯỢNG:</b>"))
         result_panel.addWidget(self.table)
 
-        # KHÔI PHỤC KẾT LUẬN Y KHOA CHI TIẾT
+        # KẾT LUẬN Y KHOA CHI TIẾT
         self.lbl_diagnosis = QLabel("Sẵn sàng phân tích...")
         self.lbl_diagnosis.setWordWrap(True)
         self.lbl_diagnosis.setMinimumHeight(220)
@@ -79,45 +79,39 @@ class StrokeApp(QMainWindow):
         result_panel.addWidget(QLabel("<b style='color: white;'>KẾT LUẬN LÂM SÀNG AI:</b>"))
         result_panel.addWidget(self.lbl_diagnosis)
 
-        # Chú giải
-        legend_box = QGroupBox("CHÚ GIẢI")
-        legend_box.setStyleSheet(
-            "QGroupBox { color: #38bdf8; font-weight: bold; border: 1px solid #334155; margin-top: 10px; border-radius: 10px; padding-top: 10px; }")
-        leg_lay = QVBoxLayout()
-
-        def add_l(c, t):
-            r = QHBoxLayout();
-            dot = QLabel();
-            dot.setFixedSize(10, 10)
-            dot.setStyleSheet(f"background: {c}; border-radius: 5px;")
-            r.addWidget(dot);
-            r.addWidget(QLabel(f"<span style='color: #cbd5e1; font-size: 10px;'>{t}</span>"));
-            leg_lay.addLayout(r)
-
-        add_l("#00ff00", "Vòng Lục: Xoắn vặn (Tortuosity > 1.4)");
-        add_l("#00ffff", "Vòng Cyan: Hẹp động mạch (AVR < 0.5)")
-        legend_box.setLayout(leg_lay);
-        result_panel.addWidget(legend_box)
+        # CHÚ GIẢI LÂM SÀNG ĐÃ ĐƯỢC CẬP NHẬT
+        self.lbl_legend = QLabel()
+        legend_html = """
+        <div style='background:white; padding:15px; border-radius:8px; font-size:14px; line-height:1.6;'>
+            <b style='color:#white; font-size:16px;'>CHÚ GIẢI LÂM SÀNG:</b><br>
+            <span style='color:#ff4d4d; font-size:18px;'>■</span> <b>Động mạch</b> (Artery - Nguy cơ hẹp)<br>
+            <span style='color:#3b82f6; font-size:18px;'>■</span> <b>Tĩnh mạch</b> (Vein - Nguy cơ phình)<br>
+            <span style='color:#22c55e; font-size:18px;'>○</span> <b>Cảnh báo xoắn vặn cục bộ</b> (High Tortuosity)<br>
+            <span style='color:#eab308; font-size:18px;'><b>+</b></span> <b>Góc phân nhánh bất thường</b> (&lt; 35° hoặc &gt; 125°)<br>
+        </div>
+        """
+        self.lbl_legend.setText(legend_html)
+        result_panel.addWidget(self.lbl_legend)
 
         result_panel.addStretch()
         main_layout.addLayout(result_panel, 1)
 
     def img_box(self, title):
-        container = QFrame();
+        container = QFrame()
         container.setStyleSheet("background: #1e293b; border-radius: 10px; border: 1px solid #334155;")
-        layout = QVBoxLayout(container);
+        layout = QVBoxLayout(container)
         lbl_t = QLabel(title)
-        lbl_t.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: bold;");
+        lbl_t.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: bold;")
         lbl_t.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        img_lbl = QLabel();
-        img_lbl.setFixedSize(380, 310);
+        img_lbl = QLabel()
+        img_lbl.setFixedSize(380, 310)
         img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(lbl_t);
-        layout.addWidget(img_lbl);
+        layout.addWidget(lbl_t)
+        layout.addWidget(img_lbl)
         return img_lbl, container
 
     def set_label_image(self, label, cv_img, is_gray=False):
-        h, w = cv_img.shape[:2];
+        h, w = cv_img.shape[:2]
         fmt = QImage.Format.Format_Grayscale8 if is_gray else QImage.Format.Format_RGB888
         if not is_gray: cv_img = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
         q_img = QImage(cv_img.data, w, h, cv_img.strides[0], fmt)
@@ -145,45 +139,37 @@ class StrokeApp(QMainWindow):
             self.set_label_image(self.lbl_skel, skel, True)
 
             # ===== Feature extraction =====
-            feats, regions = feature_extract.extract_features(mask, en)
-            av_ratio, tort, std_tort, density = feats
+            feats, regions, ab_junctions = feature_extract.extract_features(mask, en, skel)
+
+            # Gỡ gói 6 chỉ số
+            av_ratio, tort, std_tort, density, avg_angle, total_branches = feats
 
             # ===== Draw clinical map =====
             f_map = draw.draw_feature_map(
-                img_disp,
-                mask,
-                en,
-                regions,
-                img_no_bg=img_no_bg,
-                fov_mask=fov_mask
+                img_disp, mask, en, regions, img_no_bg=img_no_bg,
+                fov_mask=fov_mask, abnormal_junctions=ab_junctions
             )
 
             self.set_label_image(self.lbl_final, f_map)
 
-            # ===== Đếm artery / vein =====
-            v_pix = en[mask > 0]
-            m_br = np.median(v_pix) if len(v_pix) > 0 else 128
-
-            a_count = sum(
-                1 for r in regions
-                if r.area >= 50 and np.mean(en[r.coords[:, 0], r.coords[:, 1]]) > m_br
-            )
-
-            v_count = sum(
-                1 for r in regions
-                if r.area >= 50 and np.mean(en[r.coords[:, 0], r.coords[:, 1]]) <= m_br
-            )
-
             # ===== Bảng chỉ số =====
-            ranges = {"AV": 0.65, "Tort": 1.40, "Std": 0.20, "Density": 0.05, "Count": 15}
+            ranges = {
+                "AV": 0.65,
+                "Tort": 1.40,
+                "Std": 0.20,
+                "Density": 0.05,
+                "AngleMin": 35,
+                "AngleMax": 125,
+                "BranchCount": 15
+            }
 
             metrics = [
                 ("Tỷ lệ A/V Ratio", f"{av_ratio:.4f}", f"> {ranges['AV']}"),
-                ("Độ cong TB (Tort)", f"{tort:.4f}", f"< {ranges['Tort']}"),
-                ("Biến thiên Std", f"{std_tort:.4f}", f"< {ranges['Std']}"),
+                ("Độ xoắn vặn (Tort)", f"{tort:.4f}", f"< {ranges['Tort']}"),
+                ("Phân tán xoắn vặn", f"{std_tort:.4f}", f"< {ranges['Std']}"),
                 ("Mật độ vi mạch", f"{density * 100:.2f}%", f"> {ranges['Density'] * 100}%"),
-                ("Số đoạn Động mạch", str(a_count), f"{ranges['Count']}-40"),
-                ("Số đoạn Tĩnh mạch", str(v_count), f"{ranges['Count']}-40")
+                ("Góc phân nhánh (Avg)", f"{avg_angle:.1f}°", f"{ranges['AngleMin']}° - {ranges['AngleMax']}°"),
+                ("Tổng số ngã ba", f"{int(total_branches)}", f"> {ranges['BranchCount']}")
             ]
 
             self.table.setRowCount(6)
@@ -194,11 +180,13 @@ class StrokeApp(QMainWindow):
 
                 it_v = QTableWidgetItem(v)
 
+                # Bôi đỏ các thông số nguy hiểm vượt mức tham chiếu
                 if (
                         (i == 0 and av_ratio < ranges["AV"]) or
                         (i == 1 and tort > ranges["Tort"]) or
                         (i == 3 and density < ranges["Density"]) or
-                        ((i == 4 or i == 5) and int(v) < ranges["Count"])
+                        (i == 4 and (avg_angle < ranges["AngleMin"] or avg_angle > ranges["AngleMax"])) or
+                        (i == 5 and int(total_branches) < ranges["BranchCount"])
                 ):
                     it_v.setForeground(QColor("#ef4444"))
                     it_v.setFont(QFont("Arial", 10, QFont.Weight.Bold))
@@ -211,6 +199,7 @@ class StrokeApp(QMainWindow):
 
                 model = joblib.load(MODEL_PATH)
 
+                # Truyền 6 features vào dự đoán
                 prob = model.predict_proba([feats])[0][1]
 
                 status = "NGUY CƠ CAO" if prob > 0.6 else "NGUY CƠ THẤP"
@@ -230,8 +219,11 @@ class StrokeApp(QMainWindow):
                 if density < ranges["Density"]:
                     pathos.append("• Suy giảm mật độ vi mạch (Vessel Dropout).")
 
-                if a_count < ranges["Count"]:
-                    pathos.append("• Thiếu hụt số lượng nhánh động mạch.")
+                if avg_angle < ranges["AngleMin"] or avg_angle > ranges["AngleMax"]:
+                    pathos.append(f"• Góc phân nhánh bất thường ({avg_angle:.1f}°) - Dấu hiệu thay đổi áp lực mạch.")
+
+                if int(total_branches) < ranges["BranchCount"]:
+                    pathos.append(f"• Suy giảm mạng lưới vi mạch (Số ngã ba: {int(total_branches)}).")
 
                 if not pathos:
                     pathos.append("• Các chỉ số hình thái mạch máu trong giới hạn bình thường.")
@@ -253,7 +245,7 @@ class StrokeApp(QMainWindow):
 
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv);
-    window = StrokeApp();
-    window.show();
+    app = QApplication(sys.argv)
+    window = StrokeApp()
+    window.show()
     sys.exit(app.exec())

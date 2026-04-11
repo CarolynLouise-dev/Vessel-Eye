@@ -42,18 +42,17 @@ def train_optimized(dataset_path):
             img = cv2.resize(img, IMG_SIZE)
 
             try:
-                # Trích xuất 4 chỉ số cốt lõi
-                en, mask, *_ = riched_image.get_enhanced_vessels(img)
-                result = feature_extract.extract_features(mask, en)
-                feats = result[0]
+                en, mask, skel, *_ = riched_image.get_enhanced_vessels(img)
+
+                # Truyền skel vào và lấy list đặc trưng cực gọn gàng
+                feats, _, _ = feature_extract.extract_features(mask, en, skel)
 
                 X_features.append(feats)
                 y_labels.append(int(label))
 
-                # Giải phóng bộ nhớ
-                del img, en, mask
+                del img, en, mask, skel
             except Exception as e:
-                print(f"Lỗi tại file {filename}: {e}")
+                print(f"❌ Lỗi tại file {filename}: {e}")
 
     if not X_features:
         print("❌ Không có dữ liệu đặc trưng nào được trích xuất!")
