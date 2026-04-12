@@ -10,17 +10,21 @@ if not os.path.exists(MODEL_DIR):
     os.makedirs(MODEL_DIR)
 
 # Tham số hình ảnh
-IMG_SIZE = (400, 400)
-CLAHE_CLIP = 2.0
+IMG_SIZE = (800, 800)
+CLAHE_CLIP = 2.5
 CLAHE_GRID = (8, 8)
 
-# Ngưỡng y khoa
-AV_RATIO_THRESHOLD = 0.65
-TORTUOSITY_THRESHOLD = 1.40  # Nâng lên 1.4 như đã thống nhất
-MIN_VESSEL_AREA = 100        # Ngưỡng lọc nhiễu chung
-DENSITY_THRESHOLD = 0.05
-MIN_BRANCH_COUNT = 15
+# ==========================================
+# HẰNG SỐ CHUẨN Y KHOA TẾ BÀO (Clinical Constants)
+# ==========================================
+AV_RATIO_THRESHOLD = 0.66        # Ngưỡng hẹp động mạch (Bình thường 0.67 - 0.80)
+TORTUOSITY_THRESHOLD = 1.20      # Chỉ số VTI, >1.2 là bắt đầu có nguy cơ xoắn vặn
+MIN_VESSEL_AREA = 50            # Lọc nhiễu pixel
+DENSITY_THRESHOLD = 0.05         # Mật độ vi mạch tối thiểu
+MIN_BRANCH_COUNT = 15            # Số ngã ba tối thiểu
+ANGLE_MIN = 45                   # Góc Murray tối thiểu cho nhánh khỏe mạnh
+ANGLE_MAX = 105                  # Góc Murray tối đa
 
-# Ngưỡng lâm sàng
-THRESHOLD_TORT_LOCAL = 1.40
+# Ngưỡng lâm sàng cục bộ (Vẽ đồ họa)
+THRESHOLD_TORT_LOCAL = 1.20
 THRESHOLD_NARROW_LOCAL = 0.50
