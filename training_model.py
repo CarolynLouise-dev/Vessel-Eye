@@ -2,83 +2,209 @@ import warnings
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-import joblib
+import json
 import os
+from datetime import datetime
+
 import cv2
-import numpy as np  # Thêm numpy nếu cần xử lý mảng
+import joblib
+import numpy as np
 from sklearn.ensemble import RandomForestClassifier
-from constant import MODEL_PATH, MODEL_DIR, IMG_SIZE
-import riched_image, feature_extract
+from sklearn.metrics import (
+    accuracy_score,
+    classification_report,
+    confusion_matrix,
+    f1_score,
+    roc_auc_score,
+)
+from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split
+
+from constant import IMG_SIZE, MODEL_DIR, MODEL_PATH
+import feature_extract
+import input_data
+import riched_image
+import av_classifier
+
+REPORTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
 
 
-def train_optimized(dataset_path):
-    if not os.path.exists(MODEL_DIR):
-        os.makedirs(MODEL_DIR)
+def _collect_features(dataset_path, av_model=None):
+    X_features, y_labels = [], []
 
-    X_features = []
-    y_labels = []
-
-    print("--- Bắt đầu trích xuất đặc trưng (Bản tối ưu hóa) ---")
-
-    # Kiểm tra thư mục dataset gốc
     if not os.path.exists(dataset_path):
-        print(f"Lỗi: Thư mục '{dataset_path}' không tồn tại!")
-        return
+        print(f"ERROR: '{dataset_path}' not found!")
+        return X_features, y_labels
 
-    for label in ['0', '1']:
+    n_total = n_ok = n_err = 0
+
+    for label in ["0", "1"]:
         folder = os.path.join(dataset_path, label)
         if not os.path.exists(folder):
-            print(f"Cảnh báo: Thư mục nhãn {label} không tìm thấy tại {folder}")
             continue
 
-        # Lấy danh sách ảnh
-        files = [f for f in os.listdir(folder) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
-        print(f"Đang xử lý nhóm nhãn {label}: {len(files)} ảnh")
+        files = [
+            f for f in os.listdir(folder)
+            if f.lower().endswith((".png", ".jpg", ".jpeg"))
+        ]
+        print(f"  Label {label}: {len(files)} images")
 
         for filename in files:
             full_path = os.path.join(folder, filename)
-
-            img = cv2.imread(full_path)
-            if img is None: continue
-            img = cv2.resize(img, IMG_SIZE)
+            img_raw = cv2.imread(full_path)
+            if img_raw is None:
+                continue
+            img = input_data.standardize_fundus_image(img_raw, IMG_SIZE)
+            n_total += 1
 
             try:
-                # riched_image trả về 3 giá trị: en_green, vessel_mask, skeleton
-                en, mask, *_ = riched_image.get_enhanced_vessels(img)
-
-                # feature_extract trả về 2 cụm: [features], (lists_of_diams)
-                # Chúng ta chỉ lấy cụm đầu tiên là các chỉ số để train
-                result = feature_extract.extract_features(mask, en)
-                feats = result[0]
-
+                en, mask, skeleton, *_ = riched_image.get_enhanced_vessels(img)
+                feats, _ = feature_extract.extract_features(
+                    mask, en, skeleton=skeleton,
+                    img_bgr=img, av_model=av_model
+                )
                 X_features.append(feats)
                 y_labels.append(int(label))
+                n_ok += 1
 
-                # Giải phóng bộ nhớ
-                del img, en, mask
-            except Exception as e:
-                print(f"Lỗi tại file {filename}: {e}")
+                if n_ok % 50 == 0:
+                    print(f"    [{n_ok}/{n_total}] features extracted")
+
+                del img_raw, img, en, mask
+            except Exception:
+                n_err += 1
+
+    print(f"  Dataset: {n_ok} OK, {n_err} errors (total {n_total})")
+    return X_features, y_labels
+
+
+def train_optimized(dataset_path):
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    os.makedirs(REPORTS_DIR, exist_ok=True)
+
+    print("=" * 50)
+    print("  VESSEL-EYE Training Pipeline")
+    print("=" * 50)
+
+    # Step 0: Pre-train A/V Classifier
+    print("[0/4] Pre-training A/V SVM Classifier ...")
+    av_mdl = av_classifier.train_av_classifier(dataset_path)
+
+    # Step 1: Feature extraction
+    print("[1/4] Extracting features ...")
+    X_features, y_labels = _collect_features(dataset_path, av_model=av_mdl)
 
     if not X_features:
-        print("❌ Không có dữ liệu đặc trưng nào được trích xuất thành công!")
-        return
+        print("ERROR: No features extracted!")
+        return None
 
-    print(f"--- Đang huấn luyện với {len(X_features)} mẫu đặc trưng ---")
+    X = np.array(X_features)
+    y = np.array(y_labels)
+    n_samples = len(y)
+    n_pos = int(y.sum())
+    n_neg = n_samples - n_pos
 
-    # Huấn luyện mô hình RandomForest
-    model = RandomForestClassifier(
-        n_estimators=100,
-        max_depth=12,
-        class_weight='balanced',  # Quan trọng: Giúp giảm báo động giả
-        random_state=42
+    print(f"  Total: {n_samples} (label 0: {n_neg}, label 1: {n_pos})")
+
+    # Step 2: 5-fold Stratified CV
+    print("[2/4] 5-fold Stratified Cross-Validation ...")
+
+    cv_model = RandomForestClassifier(
+        n_estimators=100, max_depth=12, class_weight="balanced", random_state=42
     )
-    model.fit(X_features, y_labels)
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
-    # Lưu model
-    joblib.dump(model, MODEL_PATH)
-    print(f"✅ XONG: Model đã lưu thành công tại {MODEL_PATH}")
+    cv_acc = cross_val_score(cv_model, X, y, cv=skf, scoring="accuracy")
+    cv_f1  = cross_val_score(cv_model, X, y, cv=skf, scoring="f1")
+    cv_auc = cross_val_score(cv_model, X, y, cv=skf, scoring="roc_auc")
+
+    print(f"  CV Accuracy: {cv_acc.mean():.4f} +/- {cv_acc.std():.4f}")
+    print(f"  CV F1:       {cv_f1.mean():.4f} +/- {cv_f1.std():.4f}")
+    print(f"  CV AUC-ROC:  {cv_auc.mean():.4f} +/- {cv_auc.std():.4f}")
+
+    # Step 3: 80/20 Hold-out
+    print("[3/4] Hold-out evaluation (80/20) ...")
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.20, stratify=y, random_state=42
+    )
+
+    final_model = RandomForestClassifier(
+        n_estimators=100, max_depth=12, class_weight="balanced", random_state=42
+    )
+    final_model.fit(X_train, y_train)
+
+    y_pred = final_model.predict(X_test)
+    y_prob = final_model.predict_proba(X_test)[:, 1]
+
+    holdout_acc = accuracy_score(y_test, y_pred)
+    holdout_f1  = f1_score(y_test, y_pred, zero_division=0)
+    holdout_auc = (
+        roc_auc_score(y_test, y_prob)
+        if len(np.unique(y_test)) > 1 else float("nan")
+    )
+    cm = confusion_matrix(y_test, y_pred).tolist()
+
+    tn, fp, fn, tp = (
+        confusion_matrix(y_test, y_pred).ravel()
+        if len(np.unique(y_test)) == 2 else (0, 0, 0, 0)
+    )
+    sensitivity = tp / (tp + fn) if (tp + fn) > 0 else float("nan")
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else float("nan")
+
+    print(f"  Accuracy:    {holdout_acc:.4f}")
+    print(f"  F1:          {holdout_f1:.4f}")
+    print(f"  Sensitivity: {sensitivity:.4f}")
+    print(f"  Specificity: {specificity:.4f}")
+
+    feat_names = feature_extract.FEATURE_NAMES
+    importances = dict(zip(feat_names, final_model.feature_importances_.round(4).tolist()))
+
+    # Step 4: Final model
+    print("[4/4] Training final model on full dataset ...")
+    full_model = RandomForestClassifier(
+        n_estimators=100, max_depth=12, class_weight="balanced", random_state=42
+    )
+    full_model.fit(X, y)
+    joblib.dump(full_model, MODEL_PATH)
+    print(f"  Model saved -> {MODEL_PATH}")
+
+    metrics = {
+        "generated_at": datetime.now().isoformat(),
+        "dataset": {
+            "path": dataset_path,
+            "total_samples": n_samples,
+            "label_0_normal": n_neg,
+            "label_1_high_risk": n_pos,
+        },
+        "cross_validation_5fold": {
+            "accuracy_mean": round(float(cv_acc.mean()), 4),
+            "accuracy_std":  round(float(cv_acc.std()),  4),
+            "f1_mean":       round(float(cv_f1.mean()),  4),
+            "f1_std":        round(float(cv_f1.std()),   4),
+            "auc_roc_mean":  round(float(cv_auc.mean()), 4),
+            "auc_roc_std":   round(float(cv_auc.std()),  4),
+        },
+        "holdout_80_20": {
+            "accuracy":           round(holdout_acc, 4),
+            "f1_score":           round(holdout_f1,  4),
+            "auc_roc":            round(holdout_auc, 4) if not np.isnan(holdout_auc) else None,
+            "sensitivity_recall": round(sensitivity, 4) if not np.isnan(sensitivity) else None,
+            "specificity":        round(specificity, 4) if not np.isnan(specificity) else None,
+            "confusion_matrix":   cm,
+        },
+        "feature_importances": importances,
+    }
+
+    report_path = os.path.join(REPORTS_DIR, "metrics_report.json")
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(metrics, f, ensure_ascii=False, indent=2)
+
+    print("=" * 50)
+    print("  Training complete. See reports/metrics_report.json")
+    print("=" * 50)
+
+    return metrics
 
 
 if __name__ == "__main__":
-    # Đảm bảo thư mục 'dataset' có cấu trúc dataset/0 và dataset/1
     train_optimized("dataset")

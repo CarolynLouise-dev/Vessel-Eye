@@ -1,230 +1,64 @@
-Dưới đây là **README.md chuẩn cho project của bạn** (GUI + phân tích ảnh võng mạc + dự đoán nguy cơ đột quỵ). Bạn có thể **copy trực tiếp vào file `README.md` trong repo GitHub**.
+# VESSEL-EYE: Phân tích mạch máu võng mạc
 
----
+Desktop app phân tích ảnh đáy mắt (fundus) — **tập trung xử lý ảnh**, ML chỉ hỗ trợ phân loại.
+*Được Review và Tối Ưu Hóa bởi GitHub Copilot.*
 
-# 🧠 RETINA-SCAN
+## Pipeline xử lý ảnh chính (Bản cập nhật mới nhất cho Claude)
 
-### Stroke Risk Detection from Retinal Fundus Images
+1. **Tiền xử lý (Preprocessing)**:
+   - Chuẩn hóa đầu vào kích thước 768×768.
+   - **Robust FOV Mask**: Tách vùng FOV bằng large Gaussian blur, kết hợp Threshold (low + Otsu), sau đó Morphological cleanup và Erode nhẹ mask để tránh artifact viền.
+   - **Kênh Green (Green Channel)**: Sử dụng kênh xanh lá để có độ tương phản mạch/nền cao nhất.
+   - **Chuẩn hóa ánh sáng (Background Illumination Correction - FOV)**: Suy diễn background sáng (mây sáng) qua Morphological OPEN (kernel lớn) và Gaussian Blur lớn để trừ dần cho Green channel, lấy lại gradient trung tâm ra rìa. In-mask intensity normalization (phân vị 1-99) chuẩn hóa độ tương phản và Gamma normalization để scale độ sáng mean intensity về ~128.
+   - **Tăng cường tương phản cục bộ (CLAHE)**: `clipLimit=2.5`, `tileGridSize=(8, 8)` triệt tiêu chênh lệch tối ưu quanh các bó mạch.
 
-**RETINA-SCAN** là hệ thống phân tích **ảnh võng mạc (fundus image)** để trích xuất các đặc trưng hình thái mạch máu và dự đoán **nguy cơ đột quỵ** bằng Machine Learning.
+2. **Chắt lọc & Tăng cường mạch máu (Vessel Enhancement)**:
+   - **Hessian Multi-scale Frangi Filter**: Áp dụng dải sigma rộng `sigmas=1..8` để detect từ mao mạch biên đến tĩnh mạch trung tâm mà không bị bỏ sót.
+   - **Multi-scale Black-Hat (9px, 15px)**: Phép toán đồng hành cùng Frangi để đảm bảo mạch mỏng không bị nhiễu do sigma lớn nuốt.
 
-Ứng dụng có giao diện GUI trực quan giúp:
+3. **Phân đoạn sắc nét (Segmentation)**:
+   - **Adaptive Thresholding**: Tính toán ngưỡng trên phân phối FOV pixels, phối hợp linh hoạt chuyển đổi giữa Otsu và Percentiles để base density luôn ổn định ~5-18% diện tích mạch.
+   - **Morphology Cleaning**: Dùng Morphological CLOSING (3x3 ellipse) với 2 vòng lặp để nối liền các mạch đứt mảnh liti. Không dùng Open để mạch mỏng 1-2px không vỡ.
+   - **Connected Component (CC) Filter**: Loại bỏ vùng pixel cô lập rác (diện tích < 40px) và không dính viền.
 
-* tải ảnh võng mạc
-* phân đoạn mạch máu
-* trích xuất chỉ số y sinh
-* hiển thị bản đồ lâm sàng
-* dự đoán nguy cơ đột quỵ
+4. **Skeleton & Pruning**:
+   - Rút trích khung xương (skeletonize).
+   - Prune cắt các cành dăm nhiễu (<12px).
 
----
+5. **Phát hiện Optic Disc (OD)**:
+   - Đánh giá HSV/LAB scoring và loại trừ mạch máu để xác định đĩa thị. Định hình Zone B.
 
-# 📷 Demo Pipeline
+6. **Đứt đoạn & Hình thái (Closing & Discontinuity)**:
+   - Khám phá gap map bằng phép Morphological Closing trên skeleton gốc để hiển thị rõ các đoạn đứt gãy.
 
-Pipeline xử lý ảnh:
+7. **Bản đồ lâm sàng & Phân tích (A/V)**:
+   - Tính A/V ratio, mức xoắn vặn (Tortuosity), chỉ số hẹp động mạch.
 
-```
-Fundus Image
-     ↓
-Green Channel Extraction
-     ↓
-CLAHE Contrast Enhancement
-     ↓
-Top-hat Morphology
-     ↓
-Vessel Segmentation
-     ↓
-Skeletonization
-     ↓
-Feature Extraction
-     ↓
-Stroke Risk Prediction
-```
+## Giao diện (4 ảnh chính)
 
----
+| Optic Disc Detection | Vessel Segmentation |
+|---|---|
+| **Skeleton** | **Closing & Discontinuity** |
 
-# 🧪 Các chỉ số sinh học được phân tích
+## Quick start
 
-Hệ thống trích xuất **4 đặc trưng chính** từ mạch máu võng mạc:
-
-| Feature                     | Ý nghĩa                                |
-| --------------------------- | -------------------------------------- |
-| **AVR (Artery-Vein Ratio)** | Tỷ lệ đường kính động mạch / tĩnh mạch |
-| **Tortuosity**              | Độ cong mạch máu                       |
-| **Std Tortuosity**          | Độ biến thiên độ cong                  |
-| **Vessel Density**          | Mật độ mạch máu                        |
-
-Các chỉ số này có liên quan đến:
-
-* tăng huyết áp
-* bệnh tim mạch
-* nguy cơ đột quỵ
-
----
-
-# 🧠 AI Model
-
-Model sử dụng:
-
-```
-RandomForestClassifier
+```bash
+pip install -r requirements.txt
+python training_model.py   # Huấn luyện model trên dataset/0 và dataset/1 (tùy chọn)
+python main.py             # Khởi chạy giao diện
 ```
 
-Cấu hình:
+## Cấu trúc
 
 ```
-n_estimators = 100
-max_depth = 12
-class_weight = balanced
+main.py              # PyQt6 desktop UI
+riched_image.py      # Pipeline tăng cường + segmentation (CORE - Updated by GitHub Copilot)
+anatomy.py           # Optic Disc detection + Zone B
+draw.py              # Visualization + clinical map
+feature_extract.py   # 10D feature vector
+av_classifier.py     # A/V SVM classifier
+training_model.py    # RandomForest training
+evaluate_testset.py  # Test set evaluation
+constant.py          # System constants
+input_data.py        # Image I/O
 ```
-
-Input của model:
-
-```
-[AVR, Tortuosity, StdTortuosity, VesselDensity]
-```
-
-Output:
-
-```
-Stroke Risk Probability
-```
-
----
-
-# 🖥️ Giao diện ứng dụng
-
-GUI được xây dựng bằng:
-
-```
-PyQt6
-```
-
-Ứng dụng hiển thị:
-
-* ảnh gốc
-* ảnh tăng cường tương phản
-* phân đoạn mạch máu
-* skeleton mạch
-* bản đồ lâm sàng
-
-Ngoài ra còn hiển thị:
-
-* bảng chỉ số định lượng
-* kết luận lâm sàng từ AI
-
----
-
-# ⚙️ Cài đặt
-
-## 1️⃣ Clone repository
-
-```
-git clone https://github.com/CarolynLouise-dev/Vessel-Eye.git
-cd retina-scan
-```
-
----
-
-## 2️⃣ Cài đặt thư viện
-
-```
-pip install opencv-python
-pip install numpy
-pip install scikit-image
-pip install scikit-learn
-pip install pyqt6
-pip install joblib
-```
-
----
-
-# 🏋️ Huấn luyện model
-
-Chuẩn bị dataset:
-
-```
-dataset/
-   ├── 0/
-   │   ├── img1.jpg
-   │   └── ...
-   │
-   └── 1/
-       ├── img2.jpg
-       └── ...
-```
-
-Chạy training:
-
-```
-python training_model.py
-```
-
-Model sẽ được lưu tại:
-
-```
-model/stroke_model.pkl
-```
-
----
-
-# 🚀 Chạy ứng dụng
-
-```
-python main.py
-```
-
-Sau đó:
-
-1. tải ảnh võng mạc
-2. hệ thống tự động phân tích
-3. hiển thị kết quả và dự đoán
-
----
-
-# 📊 Dataset đề xuất
-
-Các dataset retinal phổ biến:
-
-* DRIVE
-* STARE
-* CHASE_DB1
-
-Các dataset này chứa **ảnh võng mạc đã được annotate mạch máu**.
-
----
-
-# 🔬 Công nghệ sử dụng
-
-```
-Python
-OpenCV
-Scikit-image
-Scikit-learn
-PyQt6
-NumPy
-```
-
----
-
-# 📈 Hướng phát triển
-
-Trong tương lai hệ thống có thể cải tiến:
-
-* Deep Learning vessel segmentation (U-Net)
-* Frangi vessel filter
-* Optic disc detection
-* CRAE / CRVE measurement
-* Stroke risk deep model
-
----
-
-# ⚠️ Lưu ý
-
-Hệ thống này **chỉ mang tính nghiên cứu và hỗ trợ**.
-
-Không thay thế cho chẩn đoán y khoa chuyên nghiệp.
-
----
-
-
-
