@@ -17,23 +17,56 @@ def _ensure_odd(value):
 
 
 def _build_fov_mask(img):
-    """Tách Field of View robust hơn để tránh CLAHE bị kéo lệch bởi viền đen."""
+    """Tách Field of View robust: threshold + ellipse fitting để loại bỏ viền sáng ngoài."""
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (35, 35), 0)
+    h, w = gray.shape
 
+    # ── Bước 1: threshold kép để tìm vùng võng mạc ──────────────────────────
+    blur = cv2.GaussianBlur(gray, (35, 35), 0)
     _, mask_low = cv2.threshold(blur, 12, 255, cv2.THRESH_BINARY)
     _, mask_otsu = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     fov_mask = cv2.bitwise_or(mask_low, mask_otsu)
 
+    # ── Bước 2: giữ component lớn nhất ──────────────────────────────────────
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(fov_mask, connectivity=8)
     if num_labels > 1:
         largest_idx = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
         fov_mask = np.where(labels == largest_idx, 255, 0).astype(np.uint8)
 
-    k_size = _ensure_odd(max(21, min(img.shape[:2]) * 0.03))
+    k_size = _ensure_odd(max(21, min(h, w) * 0.03))
     k_fov = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
     fov_mask = cv2.morphologyEx(fov_mask, cv2.MORPH_CLOSE, k_fov)
     fov_mask = cv2.morphologyEx(fov_mask, cv2.MORPH_OPEN, k_fov)
+
+    # ── Bước 3: Ellipse fitting để tạo mask tròn chính xác ──────────────────
+    # Tìm contour lớn nhất và fit ellipse để loại bỏ viền sáng bên ngoài
+    contours, _ = cv2.findContours(fov_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
+        largest_cnt = max(contours, key=cv2.contourArea)
+        if len(largest_cnt) >= 5:  # fitEllipse cần tối thiểu 5 điểm
+            try:
+                ellipse = cv2.fitEllipse(largest_cnt)
+                ell_center, ell_axes, ell_angle = ellipse
+                # Shrink ellipse nhẹ (~4%) để cắt đứt viền sáng ngoài võng mạc
+                shrink = 0.96
+                ell_axes_new = (ell_axes[0] * shrink, ell_axes[1] * shrink)
+
+                fov_ellipse = np.zeros((h, w), dtype=np.uint8)
+                cv2.ellipse(fov_ellipse,
+                            (int(ell_center[0]), int(ell_center[1])),
+                            (int(ell_axes_new[0] / 2), int(ell_axes_new[1] / 2)),
+                            ell_angle, 0, 360, 255, -1)
+
+                # Kết hợp: chỉ giữ phần nằm trong cả FOV ban đầu lẫn ellipse
+                fov_combined = cv2.bitwise_and(fov_mask, fov_ellipse)
+
+                # Kiểm tra: nếu ellipse mask hợp lý (>60% diện tích FOV cũ) thì dùng
+                ratio = float(np.count_nonzero(fov_combined)) / max(1.0, float(np.count_nonzero(fov_mask)))
+                if ratio > 0.60:
+                    fov_mask = fov_combined
+            except cv2.error:
+                pass  # Fallback về mask cũ nếu fitEllipse thất bại
+
     return fov_mask
 
 
