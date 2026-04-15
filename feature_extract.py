@@ -112,26 +112,42 @@ def get_discontinuity_map(skeleton_bin, vessel_mask, fov_mask=None):
         return np.zeros_like(vessel_mask, dtype=np.uint8), 0.0
 
     sk_u8 = sk * 255
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-    closed = cv2.morphologyEx(sk_u8, cv2.MORPH_CLOSE, kernel, iterations=3)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    closed = cv2.morphologyEx(sk_u8, cv2.MORPH_CLOSE, kernel, iterations=2)
 
     near_vessel = cv2.dilate(
         (vessel_mask > 0).astype(np.uint8) * 255,
-        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)),
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)),
         iterations=1
     )
 
     gap_raw = ((closed > 0) & (sk_u8 == 0) & (near_vessel > 0)).astype(np.uint8) * 255
 
     endpoint = _compute_endpoint_map(sk_u8, fov_mask)
-    endpoint_near = cv2.dilate(endpoint, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 25)), iterations=1)
+    endpoint_near = cv2.dilate(endpoint, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11)), iterations=1)
     gap = cv2.bitwise_and(gap_raw, endpoint_near)
 
     n_lbl, lbl, stats, _ = cv2.connectedComponentsWithStats(gap, connectivity=8)
     filtered = np.zeros_like(gap)
     for i in range(1, n_lbl):
-        if stats[i, cv2.CC_STAT_AREA] >= 15:
-            filtered[lbl == i] = 255
+        area = stats[i, cv2.CC_STAT_AREA]
+        width = stats[i, cv2.CC_STAT_WIDTH]
+        height = stats[i, cv2.CC_STAT_HEIGHT]
+        if area < 35 or max(width, height) < 6:
+            continue
+
+        comp_mask = (lbl == i).astype(np.uint8) * 255
+        comp_near = cv2.dilate(comp_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)), iterations=1)
+        nearby_endpoints = cv2.bitwise_and(comp_near, endpoint)
+        if np.count_nonzero(nearby_endpoints) < 2:
+            continue
+
+        left, top, w_box, h_box, _ = stats[i]
+        h_img, w_img = gap.shape
+        if left <= 2 or top <= 2 or left + w_box >= w_img - 2 or top + h_box >= h_img - 2:
+            continue
+
+        filtered[lbl == i] = 255
 
     gap_map = filtered
     score = float(np.count_nonzero(gap_map)) / max(1.0, float(np.count_nonzero(sk_u8 > 0)))

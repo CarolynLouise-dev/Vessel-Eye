@@ -313,10 +313,12 @@ def draw_discontinuity_map(skeleton, vessel_mask, fov_mask):
         cy_g = int(centroids[i][1])
         gap_centers.append((cx_g, cy_g, area))
 
-    # 5. Chỉ khoanh vòng tròn TOP-20 gap lớn nhất (tránh nhiễu)
+    # 5. Chỉ khoanh vòng tròn TOP-8 gap lớn nhất và đủ lớn (tránh nhiễu thị giác)
     gap_centers.sort(key=lambda x: -x[2])
-    for (gx, gy, area) in gap_centers[:20]:
-        r = max(10, min(22, int(np.sqrt(area) * 1.8)))
+    for (gx, gy, area) in gap_centers[:8]:
+        if area < 40:
+            continue
+        r = max(8, min(20, int(np.sqrt(area) * 1.6)))
         cv2.circle(vis, (gx, gy), r + 4, (0, 140, 255), 2, cv2.LINE_AA)
         cv2.circle(vis, (gx, gy), r, (0, 60, 220), 1, cv2.LINE_AA)
         cv2.circle(vis, (gx, gy), 3, (0, 200, 255), -1)
@@ -327,7 +329,7 @@ def draw_discontinuity_map(skeleton, vessel_mask, fov_mask):
     ep_list = list(zip(ep_coords[0], ep_coords[1]))
     # Chỉ hiển thị endpoint nằm gần gap
     gap_dilated = cv2.dilate(gap_filtered,
-                             cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)), iterations=1)
+                             cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11)), iterations=1)
     for ey, ex in ep_list[:200]:
         if fov_mask is not None and fov_mask[ey, ex] == 0:
             continue

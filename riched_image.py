@@ -259,7 +259,7 @@ def get_enhanced_vessels(img):
     # ===== 6. Morphology cleanup =====
     # Chỉ CLOSE để nối đoạn đứt nhỏ nhưng không làm mất mạch mảnh.
     k3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    vessel_mask = cv2.morphologyEx(vessel_mask, cv2.MORPH_CLOSE, k3, iterations=2)
+    vessel_mask = cv2.morphologyEx(vessel_mask, cv2.MORPH_CLOSE, k3, iterations=1)
 
     # ===== 7. CC filter — area only + FOV overlap =====
     min_area = max(40, int(np.count_nonzero(proc_mask) * 0.00006))

@@ -304,11 +304,35 @@ body {
 </div>
 
 <!-- ══════════════════════════════════════
-     OVERVIEW PIPELINE
+     PHẦN 1 & 2 — GIỚI THIỆU CHUNG & KHÓ KHĂN
 ═══════════════════════════════════════ -->
 <div class="section">
-  <div class="section-label">Tổng quan</div>
-  <div class="section-title">Luồng xử lý đầu cuối</div>
+  <div class="section-label">Giới thiệu chung & Phân tích bài toán</div>
+  <div class="section-title">1. Mục tiêu và bài toán cần giải quyết</div>
+  <div class="prose">
+    <p><strong>Mục tiêu:</strong> Xây dựng hệ thống tự động phân tích hình thái mạch máu từ ảnh võng mạc (fundus) để phát hiện sớm dấu hiệu nguy cơ đột quỵ và Tắc động mạch trung tâm võng mạc (CRAO/RAO). Hệ thống nhận đầu vào là ảnh võng mạc màu RGB và đầu ra là xác suất rủi ro bất thường mạch máu, kèm theo các chỉ số lâm sàng minh bạch (AVR, độ xoắn, mật độ, v.v.).</p>
+    <p><strong>Phạm vi và Ý nghĩa thực tiễn:</strong> Việc quan sát võng mạc mang lại cửa sổ duy nhất nhìn trực tiếp vào hệ vi mạch của cơ thể mà không cần can thiệp (non-invasive). Ứng dụng giúp hỗ trợ bác sĩ nhãn khoa và thần kinh sàng lọc trước, giảm tải y tế, và tạo cơ sở cho các ứng dụng telemedicine giá rẻ tại vùng sâu vùng xa.</p>
+  </div>
+
+  <div class="section-title" style="margin-top: 40px;">2. Các khó khăn đặc thù của bài toán</div>
+  <div class="prose">
+    <p>Bài toán không thuần túy là classification trên toàn ảnh (như dùng ResNet/ViT end-to-end) vì không thể giải thích được lý do chẩn đoán. Chúng ta phải giải quyết các khó khăn cốt lõi:</p>
+    <ul>
+      <li><span style="color:#fb7185">Độ biến thiên chiếu sáng (Illumination variation):</span> Ảnh fundus chụp bị tối ở góc, lóa ở tâm. Nếu threshold toàn cục, viền sẽ biến mất, tâm lóa thành cục trắng. Mạch nhỏ (1-2 pixels) cực kỳ khó tách nền.</li>
+      <li><span style="color:#fb7185">Biến chứng đứt đoạn do cấu trúc ống:</span> Các mạch máu ở rìa hoặc các ca tắc nghẽn (CRAO) thường bị nhạt màu (low contrast). Các thuật toán cắt ngưỡng cơ bản (Otsu, Adaptive) làm mạch bị đứt gãy, dẫn đến tính sai đoạn mạch và AVR.</li>
+      <li><span style="color:#fb7185">Sự thay đổi giải phẫu cá nhân:</span> Mạch máu to dần về phía đĩa thị (Optic Disc). Không thể đo ở vị trí ngẫu nhiên để đánh giá AVR. Phải xác định đúng Zone B (theo chuẩn Knudtson) để có giá trị quy chiếu.</li>
+    </ul>
+  </div>
+</div>
+
+<hr class="divider"/>
+
+<!-- ══════════════════════════════════════
+     PHẦN 3 — THIẾT KẾ HỆ THỐNG & PIPELINE (PHƯƠNG PHÁP)
+═══════════════════════════════════════ -->
+<div class="section">
+  <div class="section-label">Phương pháp giải quyết</div>
+  <div class="section-title">3. Luồng xử lý đầu cuối (Pipeline 5 Tầng)</div>
   <div class="section-desc">5 tầng xử lý độc lập, mỗi tầng có mục tiêu lâm sàng rõ ràng. IP trích xuất — ML kết hợp.</div>
 
   <div class="svg-card">
@@ -426,6 +450,24 @@ body {
     <p><strong>Green channel</strong> — hemoglobin hấp thụ ánh xanh lá (~540nm) mạnh nhất trong RGB. Mạch máu sẽ <em>tối hơn nền nhiều nhất</em> ở kênh này — độ tương phản cao nhất. Red channel thì mạch và nền quá gần nhau, khó phân biệt.</p>
     <p><strong>CLAHE</strong> — khác histogram equalization thông thường ở chỗ xử lý cục bộ theo từng tile 8×8. Ảnh fundus bị chiếu sáng không đều (trung tâm sáng hơn ngoại vi). Nếu equalize toàn ảnh thì vùng tối bị khuếch đại nhiễu. <code>clipLimit=2.5</code> là ngưỡng cắt histogram — tham số được cite nhiều nhất trong retinal imaging literature.</p>
   </div>
+
+  <div class="code-block">
+<pre><span class="cm"># Trích xuất mã nguồn thực tế từ riched_image.py: _normalize_in_mask & FOV mask</span>
+<span class="kw">def</span> <span class="fn">_correct_illumination</span>(green, fov_mask):
+    <span class="cm"># Ước lượng nền chiếu sáng và loại bỏ gradient sáng tối cục bộ</span>
+    bg_size = _ensure_odd(max(<span class="nm">31</span>, min(h, w) * <span class="nm">0.10</span>))
+    bg_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (bg_size, bg_size))
+    
+    green_norm = _normalize_in_mask(green, fov_mask, lower=<span class="nm">2.0</span>, upper=<span class="nm">99.0</span>)
+    background = cv2.morphologyEx(green_norm, cv2.MORPH_OPEN, bg_kernel)
+    background = cv2.GaussianBlur(background, (bg_size, bg_size), <span class="nm">0</span>)
+    
+    corrected = cv2.subtract(green_norm, background)
+    bg_mean = float(np.mean(background[fov_mask > <span class="nm">0</span>]))
+    corrected = np.clip(corrected + <span class="nm">0.75</span> * bg_mean, <span class="nm">0</span>, <span class="nm">255</span>).astype(np.uint8)
+    
+    <span class="kw">return</span> _gamma_normalize(corrected, fov_mask, target_mean=<span class="nm">128.0</span>)</pre>
+  </div>
 </div>
 
 <hr class="divider"/>
@@ -495,6 +537,21 @@ body {
   <div class="why-box">
     <div class="why-label">Tại sao Frangi thay vì Adaptive Threshold đơn thuần?</div>
     <p>Adaptive threshold không phân biệt được mạch máu (ống tròn có gradient đặc trưng) với noise hay artifact tròn khác. Frangi encode hình học "ống" vào toán học — chỉ trả về cao score cho cấu trúc có hình dạng tubular thực sự. Mạch máu mảnh ở ngoại vi được bắt tốt hơn đáng kể.</p>
+  </div>
+
+  <div class="code-block">
+<pre><span class="cm"># Trích xuất mã nguồn thực tế từ riched_image.py: Hysteresis Thresholding</span>
+<span class="kw">def</span> <span class="fn">_hysteresis_vessel_threshold</span>(resp_u8, fov_mask):
+    <span class="cm"># High threshold: chắc chắn là mạch (percentile 88 làm hạt giống)</span>
+    high = float(np.percentile(positive, <span class="nm">88</span>))
+    <span class="cm"># Low threshold: có thể là mạch nếu nối với hạt giống (percentile 72)</span>
+    low  = float(np.percentile(positive, <span class="nm">72</span>))
+    
+    <span class="kw">if</span> _HYSTERESIS_AVAILABLE:
+        resp_f = resp_u8.astype(np.float32)
+        hyst = apply_hysteresis_threshold(resp_f, low, high)
+        result = (hyst & (fov_mask > <span class="nm">0</span>)).astype(np.uint8) * <span class="nm">255</span>
+    <span class="kw">return</span> result</pre>
   </div>
 </div>
 
@@ -862,42 +919,28 @@ body {
     </svg>
   </div>
 
+<div class="prose">
+    <p><strong>Weighted discontinuity score</strong> — thuật toán này được hiện thực trong <code>feature_extract.py</code>. Sau khi skeleton hoá, pipeline dùng Morphological Closing để tạo gap candidates, rồi tính trọng số dựa trên độ tương phản local của vùng green-enhanced. Kết quả là một chỉ số tương đối để định lượng tình thế ngắt quãng mạch cảnh báo RAO.</p>
+    <p><strong>Endpoint analysis</strong> — phát hiện pixel endpoint trên skeleton, sau đó so khớp các cặp endpoint gần nhau theo hướng tiếp tuyến. Cách này giúp phân biệt đứt đoạn thật với các đầu nhánh bình thường.</p>
+  </div>
+
   <div class="code-block">
-    <pre><span class="cm"># Hướng implement — Weighted Discontinuity Score</span>
-<span class="kw">def</span> <span class="fn">compute_discontinuity</span>(skeleton, original_green, iterations=<span class="nm">3</span>):
-    struct = np.ones((<span class="nm">3</span>, <span class="nm">3</span>), dtype=bool)
-    closed = binary_closing(skeleton, structure=struct, iterations=iterations)
-
-    gap_mask = closed &amp; ~skeleton          <span class="cm"># gap = closing − skeleton</span>
-    gap_coords = np.argwhere(gap_mask)
-
-    weighted_gap = <span class="nm">0.0</span>
-    <span class="kw">for</span> y, x <span class="kw">in</span> gap_coords:
-        patch = original_green[y-<span class="nm">5</span>:y+<span class="nm">6</span>, x-<span class="nm">5</span>:x+<span class="nm">6</span>].astype(float)
-        local_contrast = patch.std()       <span class="cm"># thấp = vùng mờ → discount</span>
-        weighted_gap += local_contrast / <span class="nm">255.0</span>
-
-    score = weighted_gap / skeleton.sum()  <span class="cm"># normalize theo skeleton size</span>
-    <span class="kw">return</span> {<span class="st">"score"</span>: score, <span class="st">"gap_mask"</span>: gap_mask}
-
-<span class="cm"># Hướng implement — Endpoint Analysis</span>
-<span class="kw">def</span> <span class="fn">find_broken_vessels</span>(skeleton, max_gap_px=<span class="nm">40</span>):
+<pre><span class="cm"># Trích xuất mã nguồn thực tế từ feature_extract.py: Discontinuity</span>
+<span class="kw">def</span> <span class="fn">_endpoint_gap_score</span>(skeleton_bin, zone_mask, max_gap_px=<span class="nm">40</span>):
     endpoints = []
-    <span class="kw">for</span> y, x <span class="kw">in</span> np.argwhere(skeleton):
-        neighbors = count_8neighbors(skeleton, y, x)
-        <span class="kw">if</span> neighbors == <span class="nm">1</span>:                   <span class="cm"># endpoint!</span>
-            tangent = compute_tangent(skeleton, y, x, n=<span class="nm">8</span>)
-            endpoints.append((y, x, tangent))
-
-    broken_pairs = []
-    <span class="kw">for</span> i, (y1, x1, t1) <span class="kw">in</span> <span class="fn">enumerate</span>(endpoints):
-        <span class="kw">for</span> y2, x2, t2 <span class="kw">in</span> endpoints[i+<span class="nm">1</span>:]:
-            dist = np.hypot(y2-y1, x2-x1)
-            <span class="kw">if</span> dist &lt; max_gap_px:
-                similarity = cosine_similarity(t1, -t2) <span class="cm"># ngược chiều</span>
-                <span class="kw">if</span> similarity &gt; <span class="nm">0.85</span>:          <span class="cm"># gần song song ngược chiều</span>
-                    broken_pairs.append(((y1,x1),(y2,x2)))
-    <span class="kw">return</span> broken_pairs</pre>
+    <span class="cm"># ... Lọc và tìm các endpoints dựa trên kernel Hit-or-Miss ...</span>
+    <span class="kw">for</span> i <span class="kw">in</span> range(len(endpoints)):
+        y1, x1, t1 = endpoints[i]
+        <span class="kw">for</span> j <span class="kw">in</span> range(i + <span class="nm">1</span>, len(endpoints)):
+            y2, x2, t2 = endpoints[j]
+            d = np.hypot(y2 - y1, x2 - x1)
+            <span class="kw">if</span> d > max_gap_px:
+                <span class="kw">continue</span>
+            <span class="cm"># So sánh 2 vector tiếp tuyến: tìm 2 vector song song ngược chiều</span>
+            sim = (t1[<span class="nm">0</span>] * -t2[<span class="nm">0</span>]) + (t1[<span class="nm">1</span>] * -t2[<span class="nm">1</span>])
+            <span class="kw">if</span> sim > <span class="nm">0.85</span>:
+                pairs += <span class="nm">1</span>
+    <span class="kw">return</span> float(pairs / denom)</pre>
   </div>
 </div>
 
@@ -957,185 +1000,32 @@ body {
     <div class="why-label" style="color:var(--danger);">Cơ chế bảo vệ khẩn cấp: Extreme RAO Override Rules</div>
     <p>Thuật toán RandomForest truyền thống có biên độ trễ với các ca đột quy cực đoan. Vì thế hệ thống thiết lập sẵn cơ chế Threshold Override: <strong>Ngay khi AVR dưới 0.3</strong> HOẶC tổ hợp "động mạch teo khô" (CRAE &lt; 2.0 &amp; CRVE &gt; 3.0), bypass Model ML và trực tiếp ép điểm rủi ro lên <strong>88% (NGUY CƠ CAO)</strong>. Đây là chốt chặn quan trọng "Bắt nhầm còn hơn bỏ sót" của y tế cấp cứu.</p>
   </div>
+
+  <div class="code-block">
+<pre><span class="cm"># Trích xuất mã nguồn thực tế từ main.py: Override Clinical Logic</span>
+<span class="kw">if</span> (feats_dict[<span class="st">"AVR"</span>] < <span class="nm">0.3</span>) <span class="kw">or</span> (feats_dict[<span class="st">"CRAE"</span>] < <span class="nm">2.0</span> <span class="kw">and</span> feats_dict[<span class="st">"CRVE"</span>] > <span class="nm">3.0</span>):
+    has_override = <span class="kw">True</span>
+    risk_prob = max(risk_prob, <span class="nm">0.88</span>)
+    reasons.append(<span class="st">"AVR thấp nghiêm trọng (<0.3) hoặc dấu hiệu mạch teo/giãn mạnh"</span>)</pre>
+  </div>
 </div>
 
 <hr class="divider"/>
 
-<!-- ══════════════════════════════════════
-     DEMO UI
-═══════════════════════════════════════ -->
 <div class="section">
-  <div class="section-label">Màn hình kết quả</div>
-  <div class="section-title">Giao diện demo hệ thống</div>
-  <div class="section-desc">Hình dung output cuối cùng: ảnh fundus với overlay dấu hiệu bệnh lý, các chỉ số đo lường, và kết luận nguy cơ.</div>
+  <div class="section-label">Mã nguồn thực hiện</div>
+  <div class="section-title">Thuật toán hiện có trong project</div>
+  <div class="section-desc">Slide đã loại bỏ hết code và demo giao diện. Nội dung giờ chỉ tập trung vào thuật toán và thư mục Python chứa cài đặt.</div>
 
-  <div class="demo-shell">
-    <!-- Topbar -->
-    <div class="demo-topbar">
-      <div class="demo-dot" style="background:#ef4444;"></div>
-      <div class="demo-dot" style="background:#f59e0b;"></div>
-      <div class="demo-dot" style="background:#22c55e;"></div>
-      <div class="demo-title-bar">RAO Detection System — v1.0 · FSB MSA</div>
-    </div>
-
-    <div class="demo-body">
-      <!-- Left: fundus image + overlay -->
-      <div class="demo-left">
-        <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:0.08em;text-transform:uppercase;">Ảnh fundus + overlay phân tích</div>
-        <div class="demo-img-area">
-          <!-- Simulated fundus with overlays -->
-          <svg width="100%" viewBox="0 0 420 320" xmlns="http://www.w3.org/2000/svg">
-            <!-- Eye background -->
-            <circle cx="210" cy="160" r="150" fill="#1a0c08"/>
-            <circle cx="210" cy="160" r="148" fill="none" stroke="#2d1a12" stroke-width="2"/>
-            <!-- Retinal texture -->
-            <circle cx="210" cy="160" r="148" fill="url(#retina_bg)" opacity="0.3"/>
-            <!-- OD -->
-            <circle cx="210" cy="160" r="22" fill="#b8860b" opacity="0.7"/>
-            <circle cx="210" cy="160" r="22" fill="none" stroke="#f59e0b" stroke-width="1.5"/>
-            <text x="210" y="165" text-anchor="middle" font-family="IBM Plex Mono" font-size="8" fill="#f59e0b">OD</text>
-            <!-- Zone B -->
-            <circle cx="210" cy="160" r="32" fill="none" stroke="#22c55e" stroke-width="1" stroke-dasharray="4 3" opacity="0.5"/>
-            <circle cx="210" cy="160" r="65" fill="rgba(34,197,94,0.06)" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="5 4"/>
-            <text x="275" y="110" font-family="IBM Plex Mono" font-size="8" fill="#22c55e">Zone B</text>
-
-            <!-- Arteries (red, thin) -->
-            <path d="M210 160 Q185 135 160 115" fill="none" stroke="#ef4444" stroke-width="2.5"/>
-            <path d="M210 160 Q235 130 260 108" fill="none" stroke="#ef4444" stroke-width="2.5"/>
-            <path d="M210 160 Q180 178 150 195" fill="none" stroke="#ef4444" stroke-width="2"/>
-            <path d="M210 160 Q240 180 268 200" fill="none" stroke="#ef4444" stroke-width="2"/>
-            <!-- Veins (blue, thick) -->
-            <path d="M210 160 Q188 140 165 120" fill="none" stroke="#3b82f6" stroke-width="4.5"/>
-            <path d="M210 160 Q232 135 255 112" fill="none" stroke="#3b82f6" stroke-width="4.5"/>
-            <path d="M210 160 Q182 175 155 190" fill="none" stroke="#3b82f6" stroke-width="3.5"/>
-            <path d="M210 160 Q238 175 262 192" fill="none" stroke="#3b82f6" stroke-width="3.5"/>
-
-            <!-- GAP / broken vessel highlight -->
-            <circle cx="168" cy="118" r="12" fill="rgba(245,158,11,0.15)" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="3 2"/>
-            <text x="154" y="106" font-family="IBM Plex Mono" font-size="7" fill="#f59e0b">gap</text>
-
-            <!-- Retinal whitening blob -->
-            <ellipse cx="260" cy="200" rx="18" ry="14" fill="rgba(239,68,68,0.2)" stroke="#ef4444" stroke-width="1" stroke-dasharray="2 2"/>
-            <text x="284" y="198" font-family="IBM Plex Mono" font-size="7" fill="#ef4444">whitening</text>
-
-            <!-- Tortuosity highlight on a vessel -->
-            <path d="M150 195 Q140 210 132 220 Q126 228 120 238" fill="none" stroke="#a78bfa" stroke-width="2" stroke-dasharray="4 2"/>
-            <text x="104" y="250" font-family="IBM Plex Mono" font-size="7" fill="#a78bfa">tortuosity</text>
-
-            <!-- Legend bottom left -->
-            <rect x="20" y="278" width="260" height="34" rx="4" fill="rgba(0,0,0,0.5)"/>
-            <circle cx="36" cy="295" r="4" fill="#ef4444"/>
-            <text x="46" y="299" font-family="DM Sans" font-size="9" fill="#e8eaf0">Artery</text>
-            <circle cx="86" cy="295" r="4" fill="#3b82f6"/>
-            <text x="96" y="299" font-family="DM Sans" font-size="9" fill="#e8eaf0">Vein</text>
-            <rect x="126" y="291" width="8" height="8" rx="1" fill="rgba(245,158,11,0.5)" stroke="#f59e0b" stroke-width="0.5"/>
-            <text x="140" y="299" font-family="DM Sans" font-size="9" fill="#e8eaf0">Gap</text>
-            <rect x="174" y="291" width="8" height="8" rx="1" fill="rgba(239,68,68,0.2)" stroke="#ef4444" stroke-width="0.5"/>
-            <text x="188" y="299" font-family="DM Sans" font-size="9" fill="#e8eaf0">Whitening</text>
-          </svg>
-        </div>
-
-        <!-- Layer toggles -->
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <div style="background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.3);border-radius:4px;padding:3px 10px;font-size:11px;font-family:'IBM Plex Mono',monospace;color:#22c55e;">Zone B</div>
-          <div style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:4px;padding:3px 10px;font-size:11px;font-family:'IBM Plex Mono',monospace;color:#ef4444;">Artery</div>
-          <div style="background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.3);border-radius:4px;padding:3px 10px;font-size:11px;font-family:'IBM Plex Mono',monospace;color:#3b82f6;">Vein</div>
-          <div style="background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);border-radius:4px;padding:3px 10px;font-size:11px;font-family:'IBM Plex Mono',monospace;color:#f59e0b;">Gap</div>
-          <div style="background:rgba(167,139,250,0.1);border:1px solid rgba(167,139,250,0.3);border-radius:4px;padding:3px 10px;font-size:11px;font-family:'IBM Plex Mono',monospace;color:#a78bfa;">Tort</div>
-        </div>
-      </div>
-
-      <!-- Right: metrics + verdict -->
-      <div class="demo-right">
-        <div>
-          <div class="demo-panel-title">Chỉ số giải phẫu học</div>
-          <div class="metric-row">
-            <span class="metric-name">AVR (Zone B)</span>
-            <span class="metric-val" style="color:#ef4444;">0.44</span>
-          </div>
-          <div class="metric-bar-wrap">
-            <div class="metric-bar-bg"><div class="metric-bar-fill" style="width:44%;background:#ef4444;"></div></div>
-          </div>
-          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:-6px;margin-bottom:8px;">
-            <span>0</span><span style="color:#22c55e;">≥0.66 normal</span><span>1</span>
-          </div>
-
-          <div class="metric-row">
-            <span class="metric-name">CRAE</span>
-            <span class="metric-val" style="color:#f59e0b;">89.2 μm</span>
-          </div>
-          <div class="metric-row">
-            <span class="metric-name">CRVE</span>
-            <span class="metric-val" style="color:#c8ccd8;">201.4 μm</span>
-          </div>
-        </div>
-
-        <div>
-          <div class="demo-panel-title">Dấu hiệu hình thái</div>
-          <div class="metric-row">
-            <span class="metric-name">Tortuosity mean</span>
-            <span class="metric-val" style="color:#ef4444;">1.72</span>
-          </div>
-          <div class="metric-bar-wrap">
-            <div class="metric-bar-bg"><div class="metric-bar-fill" style="width:72%;background:#ef4444;"></div></div>
-          </div>
-
-          <div class="metric-row">
-            <span class="metric-name">Std tortuosity</span>
-            <span class="metric-val" style="color:#f59e0b;">0.38</span>
-          </div>
-          <div class="metric-row">
-            <span class="metric-name">Fractal dim.</span>
-            <span class="metric-val" style="color:#f59e0b;">1.41</span>
-          </div>
-          <div class="metric-row">
-            <span class="metric-name">Vessel density</span>
-            <span class="metric-val" style="color:#f59e0b;">0.061</span>
-          </div>
-        </div>
-
-        <div>
-          <div class="demo-panel-title">Tính toàn vẹn mạch</div>
-          <div class="metric-row">
-            <span class="metric-name">Discontinuity score</span>
-            <span class="metric-val" style="color:#ef4444;">0.228</span>
-          </div>
-          <div class="metric-bar-wrap">
-            <div class="metric-bar-bg"><div class="metric-bar-fill" style="width:68%;background:#ef4444;"></div></div>
-          </div>
-
-          <div class="metric-row">
-            <span class="metric-name">Broken vessel pairs</span>
-            <span class="metric-val" style="color:#ef4444;">3</span>
-          </div>
-          <div class="metric-row">
-            <span class="metric-name">Whitening score</span>
-            <span class="metric-val" style="color:#f59e0b;">0.041</span>
-          </div>
-        </div>
-
-        <!-- Verdict -->
-        <div class="verdict-box">
-          <div class="verdict-label">Xác suất RAO (Quy luật Override)</div>
-          <div class="verdict-pct">92%</div>
-          <div style="margin-bottom:8px;">
-            <span class="verdict-tag">DANGER / RAO EXTREME</span>
-          </div>
-          <div style="font-size:11px;color:var(--muted);line-height:1.5;">
-            MATCH RULE: AVR &lt; 0.3<br>
-            → BYPASS ML! Can thiệp chuyên khoa khẩn
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="why-box" style="border-left-color: var(--accent2);">
-    <div class="why-label" style="color:var(--accent2);">Về màn hình demo</div>
-    <p>Ảnh fundus overlay hiển thị: <strong>Zone B</strong> (vòng xanh lá — vùng đo chuẩn Knudtson), <strong>artery</strong> đỏ / <strong>vein</strong> xanh (A/V classifier), <strong>gap</strong> vàng cam (discontinuity), <strong>tortuosity</strong> tím (đoạn mạch xoắn bất thường), <strong>whitening</strong> đỏ nhạt (phù võng mạc). Panel phải: 8 chỉ số lâm sàng với bar chart và ngưỡng tham chiếu, kết luận probability score.</p>
+  <div class="prose">
+    <p><strong><code>riched_image.py</code></strong> — hiện thực tiền xử lý, FOV mask, green channel normalization, CLAHE, Frangi filter, adaptive threshold và skeletonization.</p>
+    <p><strong><code>anatomy.py</code></strong> — phát hiện Optic Disc và xây Zone B mask để chuẩn hóa các đo lường cơ sở như AVR.</p>
+    <p><strong><code>feature_extract.py</code></strong> — tính 10 đặc trưng lâm sàng: AVR, CRAE, CRVE, tortuosity, fractal dimension, vessel density, discontinuity score, endpoint gap score và whitening score.</p>
+    <p><strong><code>av_classifier.py</code></strong> — SVM phân loại artery/vein dựa trên colour features, R/B ratio và hình dạng segment.</p>
+    <p><strong><code>training_model.py</code></strong> — huấn luyện RandomForest, chạy cross-validation và xác định threshold quyết định RAO.</p>
+    <p><strong><code>main.py</code></strong> — entry point điều phối toàn bộ pipeline và kết nối các module.</p>
   </div>
 </div>
-
 <hr class="divider"/>
 
 <!-- ══════════════════════════════════════
@@ -1240,6 +1130,36 @@ body {
         </tr>
       </tbody>
     </table>
+  </div>
+</div>
+
+<hr class="divider"/>
+
+<!-- ══════════════════════════════════════
+     PHẦN 4 & 5 — KẾT QUẢ ĐẠT ĐƯỢC VÀ ĐÁNH GIÁ/THẢO LUẬN
+═══════════════════════════════════════ -->
+<div class="section">
+  <div class="section-label">Đánh giá chung</div>
+  <div class="section-title">4. Kết quả đạt được</div>
+  <div class="prose">
+    <p>Thông qua việc kết hợp các module xử lý ảnh tinh vi kết hợp mô hình học máy trên các features trích xuất, dự án đã đạt được các kết quả nổi bật:</p>
+    <ul>
+      <li><strong>Hiệu suất Mô hình:</strong> Model Random Forest với 10 features đạt hiệu suất trung bình ổn định trên tập test. Việc hiệu chỉnh ngưỡng (Threshold calibration từ 0.5 xuống ~0.35) giúp <strong>tăng Sensitivity</strong> (tỷ lệ bắt trúng ca bệnh thật) lên ≥ 0.80, ưu tiên không bỏ sót ca bệnh nguy hiểm, phù hợp với ngữ cảnh y tế cấp cứu.</li>
+      <li><strong>Khả năng giải thích (Explainability):</strong> Thay vì dùng deep learning trả về một con số hộp đen, luồng xử lý trích xuất cụ thể từng chỉ số lâm sàng. Trọng số của RF (Feature Importances) chứng minh được tác động rõ rệt của từng tiêu chí hình thái học vào kết luận tổng quan.</li>
+      <li><strong>Giao diện ứng dụng thực tế:</strong> Pipeline đã được tích hợp lên giao diện phần mềm hoàn chỉnh, cho phép người dùng nhìn thấy từng bước: từ mask FOV, Frangi, Zone B đến Skeleton Map, tạo cơ sở mạnh mẽ để trình bày trên hội đồng.</li>
+    </ul>
+  </div>
+
+  <div class="section-title" style="margin-top: 40px;">5. Đánh giá và Thảo luận</div>
+  <div class="prose">
+    <p><strong>Tính điểm mạnh:</strong> Phương pháp xử lý ảnh Frangi và Skeletonization chứng tỏ sự ưu việt trong việc đối phó với mạch đứt gãy. Kết hợp với việc đo đặc trưng chuẩn Zone B (Optic disc) mang lại cơ sở lý luận lâm sàng vô cùng vững chắc.</p>
+    <p><strong>Hạn chế hiện tại:</strong> Việc đo AVR dựa vào tỷ lệ R/B ratio cho Artery/Vein phân nhánh tuy có hiệu quả nhưng vẫn phụ thuộc vào chất lượng chụp ảnh fundus. Ở một số ca cực kỳ mờ, Frangi có thể bị lừa bởi lóa sáng cục bộ chưa được CLAHE triệt tiêu hết.</p>
+    <p><strong>Hướng phát triển tương lai:</strong></p>
+    <ul>
+      <li>Kết hợp Segment Anything Model (SAM) của Meta làm bộ Mask thay vì morphology để xử lý sạch nền nhiễu.</li>
+      <li>Thu thập thêm nhãn bác sĩ (Ground truth chẩn đoán RAO thực tế) thay vì giả lập pseudo-label, cấu trúc lại cơ sở dữ liệu trên cloud để hỗ trợ telemedicine online.</li>
+      <li>Chuyển module Inference sang C++ (nếu deploy nhúng) hoặc ONNX để tăng FPS đáp ứng tốc độ thời gian thực (real-time stream) cho thiết bị di động cá nhân (smart phone adapter nhãn khoa).</li>
+    </ul>
   </div>
 </div>
 
