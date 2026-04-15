@@ -17,7 +17,7 @@ from sklearn.metrics import (
     f1_score,
     roc_auc_score,
 )
-from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split
+from sklearn.model_selection import GridSearchCV, StratifiedKFold, cross_val_score, train_test_split
 
 from constant import IMG_SIZE, MODEL_DIR, MODEL_PATH
 import feature_extract
@@ -105,14 +105,31 @@ def train_optimized(dataset_path):
 
     print(f"  Total: {n_samples} (label 0: {n_neg}, label 1: {n_pos})")
 
-    # Step 2: 5-fold Stratified CV
-    print("[2/4] 5-fold Stratified Cross-Validation ...")
+    # Step 2: 5-fold Stratified Cross-Validation + hyperparameter search
+    print("[2/4] 5-fold Stratified Cross-Validation + hyperparameter search ...")
 
-    cv_model = RandomForestClassifier(
-        n_estimators=150, max_depth=6, min_samples_leaf=2, class_weight="balanced", random_state=42
-    )
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    base_rf = RandomForestClassifier(
+        n_estimators=150, class_weight="balanced", random_state=42
+    )
+    param_grid = {
+        "max_depth": [4, 5, 6],
+        "min_samples_leaf": [2],
+    }
+    grid = GridSearchCV(
+        estimator=base_rf,
+        param_grid=param_grid,
+        cv=skf,
+        scoring="f1",
+        n_jobs=-1,
+        refit=True,
+        verbose=0,
+    )
+    grid.fit(X, y)
+    best_params = grid.best_params_
+    print(f"  Best hyperparameters: {best_params}")
 
+    cv_model = grid.best_estimator_
     cv_acc = cross_val_score(cv_model, X, y, cv=skf, scoring="accuracy")
     cv_f1  = cross_val_score(cv_model, X, y, cv=skf, scoring="f1")
     cv_auc = cross_val_score(cv_model, X, y, cv=skf, scoring="roc_auc")
@@ -129,7 +146,11 @@ def train_optimized(dataset_path):
     )
 
     final_model = RandomForestClassifier(
-        n_estimators=150, max_depth=6, min_samples_leaf=2, class_weight="balanced", random_state=42
+        n_estimators=150,
+        max_depth=best_params.get("max_depth", 6),
+        min_samples_leaf=best_params.get("min_samples_leaf", 2),
+        class_weight="balanced",
+        random_state=42,
     )
     final_model.fit(X_train, y_train)
 
