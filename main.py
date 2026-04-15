@@ -490,13 +490,16 @@ class StrokeApp(QMainWindow):
             for i, (n, v, r) in enumerate(metrics):
                 self.table.setItem(i, 0, QTableWidgetItem(n))
                 it_v = QTableWidgetItem(v)
-                if (
-                    (i == 0 and av_ratio < ranges["AV"]) or
-                    (i == 3 and tort > ranges["Tort"]) or
-                    (i == 5 and density < ranges["Density"]) or
-                    (i == 7 and disc_score > 0.15) or
-                    (i == 8 and endpoint_score > ranges["Endpoint"])
-                ):
+                is_abnormal = (
+                    (i == 0 and av_ratio < ranges["AV"]) or          # AV ratio
+                    (i == 1 and crae < 2.0) or                        # CRAE cực thấp → RAO
+                    (i == 3 and tort > ranges["Tort"]) or             # Tortuosity
+                    (i == 5 and density < ranges["Density"]) or       # Mật độ
+                    (i == 6 and (fractal_dim < 1.3 or fractal_dim > 1.7)) or  # Fractal ngoài ngưỡng
+                    (i == 7 and disc_score > 0.15) or                 # Discontinuity
+                    (i == 8 and endpoint_score > ranges["Endpoint"])  # Endpoint gap
+                )
+                if is_abnormal:
                     it_v.setForeground(QColor("#ef4444"))
                     it_v.setFont(QFont("Arial", 10, QFont.Weight.Bold))
                 else:
@@ -508,6 +511,18 @@ class StrokeApp(QMainWindow):
             if os.path.exists(MODEL_PATH):
                 model = joblib.load(MODEL_PATH)
                 prob = model.predict_proba([feats])[0][1]
+
+                # ══ Override cứng cho trường hợp chỉ số cực kỳ bất thường ══
+                # ML model có thể bỏ sót RAO/CRVO nặng vì training data không đủ
+                # Các quy tắc dựa trên tiêu chuẩn lâm sàng được chứng minh:
+                rao_suspected = (
+                    av_ratio < 0.30 or                           # AV ratio cực thấp: tắc động mạch
+                    (crae < 2.0 and crve > 3.0) or               # Artery gần biến mất, vein còn thấy
+                    (fractal_dim < 1.20 and av_ratio < 0.50) or  # Cây mạch rất thưa + hẹp nặng
+                    (av_ratio < 0.40 and density < 0.08)         # Hẹp + mật độ thấp kép
+                )
+                if rao_suspected:
+                    prob = max(prob, 0.88)   # Ép ít nhất 88%
 
                 if prob >= 0.70:
                     status = "NGUY CƠ CAO"
@@ -523,8 +538,22 @@ class StrokeApp(QMainWindow):
                 msg += "<p><b>Phát hiện bệnh lý:</b></p>"
 
                 pathos = []
-                if av_ratio < ranges["AV"]:
+
+                # ── Dấu hiệu nặng (ưu tiên hiển thị trước) ──
+                if av_ratio < 0.30:
+                    pathos.append(f"⚠ AV ratio cực thấp ({av_ratio:.3f}) — nghi ngờ tắc động mạch võng mạc (RAO).")
+                elif av_ratio < ranges["AV"]:
                     pathos.append("• Hẹp tiểu động mạch lan tỏa (Retinal Narrowing).")
+
+                if crae < 2.0 and crve > 3.0:
+                    pathos.append(f"⚠ Động mạch gần như không phát hiện được (CRAE={crae:.1f}px) — RAO nặng.")
+
+                if fractal_dim < 1.20:
+                    pathos.append(f"⚠ Cây mạch cực kỳ thưa (Fractal={fractal_dim:.3f} < 1.2) — mất mạch diện rộng.")
+                elif fractal_dim < 1.30:
+                    pathos.append(f"• Cây mạch thưa hơn bình thường (Fractal={fractal_dim:.3f}).")
+
+                # ── Dấu hiệu thông thường ──
                 if tort > ranges["Tort"]:
                     pathos.append(f"• Mạch máu xoắn vặn (Tortuosity: {tort:.2f}).")
                 if density < ranges["Density"]:

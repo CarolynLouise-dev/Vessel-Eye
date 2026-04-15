@@ -4,6 +4,12 @@ from skimage.filters import frangi
 from skimage.morphology import skeletonize
 import warnings
 
+try:
+    from skimage.filters import apply_hysteresis_threshold
+    _HYSTERESIS_AVAILABLE = True
+except ImportError:
+    _HYSTERESIS_AVAILABLE = False
+
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 # ==========================================
@@ -125,8 +131,47 @@ def _correct_illumination(green, fov_mask):
     return corrected
 
 
+def _hysteresis_vessel_threshold(resp_u8, fov_mask):
+    """
+    Ngưỡng kép kiểu Hysteresis (giống Canny):
+    - High threshold: pixel mạch chắc chắn (seed)
+    - Low threshold: pixel yếu nhưng nối liền với seed → giữ lại
+    Kết quả: mạch liên tục hơn, ít đứt đoạn hơn so với ngưỡng đơn.
+    """
+    fov_vals = resp_u8[fov_mask > 0]
+    positive = fov_vals[fov_vals > 0]
+    if positive.size == 0:
+        return np.zeros_like(resp_u8, dtype=np.uint8)
+
+    # High threshold: chắc chắn là mạch (tương tự Otsu / percentile 88)
+    high = float(np.percentile(positive, 88))
+    # Low threshold: có thể là mạch nếu nối với pixel chắc chắn (percentile 72)
+    low  = float(np.percentile(positive, 72))
+
+    # Điều chỉnh density
+    high_mask = (resp_u8.astype(np.float32) >= high) & (fov_mask > 0)
+    density_high = float(np.count_nonzero(high_mask)) / max(1.0, float(np.count_nonzero(fov_mask)))
+    if density_high < 0.03:   # Quá ít seed → hạ ngưỡng
+        high = float(np.percentile(positive, 82))
+        low  = float(np.percentile(positive, 65))
+    elif density_high > 0.20:  # Quá nhiều → tăng ngưỡng
+        high = float(np.percentile(positive, 92))
+        low  = float(np.percentile(positive, 78))
+
+    if _HYSTERESIS_AVAILABLE:
+        resp_f = resp_u8.astype(np.float32)
+        hyst = apply_hysteresis_threshold(resp_f, low, high)
+        result = (hyst & (fov_mask > 0)).astype(np.uint8) * 255
+    else:
+        # Fallback: ngưỡng đơn với low threshold
+        thresh = int(np.clip(low, 1, 255))
+        result = ((resp_u8 >= thresh) & (fov_mask > 0)).astype(np.uint8) * 255
+
+    return result
+
+
 def _adaptive_vessel_threshold(resp_u8, fov_mask):
-    """Chọn threshold ổn định hơn giữa ảnh tối/sáng khác nhau."""
+    """Fallback: chọn threshold ổn định giữa ảnh tối/sáng khác nhau."""
     fov_vals = resp_u8[fov_mask > 0]
     positive = fov_vals[fov_vals > 0]
     if positive.size == 0:
@@ -204,10 +249,12 @@ def get_enhanced_vessels(img):
     resp_u8 = cv2.GaussianBlur(resp_u8, (3, 3), 0)
     resp_u8 = cv2.bitwise_and(resp_u8, resp_u8, mask=proc_mask)
 
-    # ===== 5. Adaptive threshold within FOV =====
-    thresh = _adaptive_vessel_threshold(resp_u8, proc_mask)
-    vessel_mask = (resp_u8 >= thresh).astype(np.uint8) * 255
-    vessel_mask = cv2.bitwise_and(vessel_mask, vessel_mask, mask=proc_mask)
+    # ===== 5. Hysteresis threshold (ngưỡng kép) =====
+    # Giống kỹ thuật của chị trong team: high seed + low connect
+    vessel_mask = _hysteresis_vessel_threshold(resp_u8, proc_mask)
+    if np.count_nonzero(vessel_mask) < 100:  # Fallback nếu hysteresis thất bại
+        thresh = _adaptive_vessel_threshold(resp_u8, proc_mask)
+        vessel_mask = ((resp_u8 >= thresh) & (proc_mask > 0)).astype(np.uint8) * 255
 
     # ===== 6. Morphology cleanup =====
     # Chỉ CLOSE để nối đoạn đứt nhỏ nhưng không làm mất mạch mảnh.

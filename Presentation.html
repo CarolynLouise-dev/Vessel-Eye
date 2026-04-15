@@ -1,0 +1,1252 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>RAO Detection Pipeline — Tài liệu kỹ thuật đầy đủ</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Lora:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@300;400;500&display=swap');
+
+:root {
+  --bg: #0f1117;
+  --surface: #161b27;
+  --surface2: #1e2535;
+  --border: rgba(255,255,255,0.08);
+  --border2: rgba(255,255,255,0.15);
+  --text: #e8eaf0;
+  --muted: #7a8499;
+  --accent: #4a9eff;
+  --accent2: #22c55e;
+  --warn: #f59e0b;
+  --danger: #ef4444;
+  --purple: #a78bfa;
+  --teal: #2dd4bf;
+  --coral: #fb7185;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 300;
+  line-height: 1.75;
+  font-size: 15px;
+}
+
+.page { max-width: 860px; margin: 0 auto; padding: 60px 32px 120px; }
+
+/* ── Header ── */
+.doc-header {
+  border-bottom: 1px solid var(--border2);
+  padding-bottom: 40px;
+  margin-bottom: 64px;
+}
+.doc-tag {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+  text-transform: uppercase;
+  margin-bottom: 16px;
+}
+.doc-title {
+  font-family: 'Lora', serif;
+  font-size: 38px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: #fff;
+  margin-bottom: 12px;
+}
+.doc-sub {
+  color: var(--muted);
+  font-size: 15px;
+  max-width: 580px;
+}
+
+/* ── Section ── */
+.section { margin-bottom: 72px; }
+.section-label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  color: var(--muted);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.section-title {
+  font-family: 'Lora', serif;
+  font-size: 26px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 6px;
+}
+.section-desc {
+  color: var(--muted);
+  margin-bottom: 28px;
+  max-width: 640px;
+}
+
+/* ── Stage badge ── */
+.stage-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  color: var(--accent);
+  margin-bottom: 20px;
+}
+
+/* ── SVG card ── */
+.svg-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px;
+  margin: 24px 0;
+  overflow-x: auto;
+}
+.svg-card svg { display: block; }
+
+/* ── Prose ── */
+.prose { margin: 20px 0; }
+.prose p { color: #c8ccd8; margin-bottom: 14px; line-height: 1.8; }
+.prose strong { color: var(--text); font-weight: 500; }
+.prose code {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  color: var(--teal);
+}
+
+/* ── Why box ── */
+.why-box {
+  background: linear-gradient(135deg, rgba(74,158,255,0.06), rgba(34,197,94,0.04));
+  border: 1px solid rgba(74,158,255,0.2);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin: 20px 0;
+}
+.why-box .why-label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px;
+  color: var(--accent);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.why-box p { color: #b8c0d0; font-size: 14px; margin: 0; }
+
+/* ── Info grid ── */
+.info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 20px 0; }
+.info-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+}
+.info-card .ic-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.info-card .ic-val { font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: var(--accent2); }
+
+/* ── Code block ── */
+.code-block {
+  background: #0a0d14;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  margin: 16px 0;
+  overflow-x: auto;
+}
+.code-block pre {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #8892a4;
+}
+.code-block .kw { color: var(--purple); }
+.code-block .fn { color: var(--accent); }
+.code-block .st { color: var(--accent2); }
+.code-block .cm { color: #4a5568; }
+.code-block .nm { color: var(--warn); }
+
+/* ── Divider ── */
+.divider { border: none; border-top: 1px solid var(--border); margin: 48px 0; }
+
+/* ── Demo UI ── */
+.demo-shell {
+  background: #0d1018;
+  border: 1px solid var(--border2);
+  border-radius: 16px;
+  overflow: hidden;
+  margin: 28px 0;
+}
+.demo-topbar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.demo-dot { width:10px; height:10px; border-radius:50%; }
+.demo-title-bar {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  flex: 1;
+  text-align: center;
+}
+.demo-body {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  min-height: 480px;
+}
+.demo-left {
+  padding: 24px;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.demo-img-area {
+  flex: 1;
+  background: #060810;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  position: relative;
+  overflow: hidden;
+  min-height: 300px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.demo-right {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+}
+.demo-panel-title {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+}
+.metric-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.metric-name { font-size: 12px; color: var(--muted); }
+.metric-val { font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 500; }
+.metric-bar-wrap { margin: 4px 0 10px; }
+.metric-bar-bg { height: 3px; background: var(--border2); border-radius: 2px; overflow: hidden; }
+.metric-bar-fill { height: 100%; border-radius: 2px; }
+.verdict-box {
+  background: var(--surface2);
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  padding: 16px;
+  text-align: center;
+  margin-top: auto;
+}
+.verdict-label { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+.verdict-pct {
+  font-family: 'Lora', serif;
+  font-size: 36px;
+  font-weight: 600;
+  color: var(--danger);
+  line-height: 1;
+  margin-bottom: 4px;
+}
+.verdict-tag {
+  display: inline-block;
+  background: rgba(239,68,68,0.15);
+  color: var(--danger);
+  border-radius: 4px;
+  padding: 2px 10px;
+  font-size: 11px;
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+@media (max-width: 640px) {
+  .demo-body { grid-template-columns: 1fr; }
+  .info-grid { grid-template-columns: 1fr; }
+  .doc-title { font-size: 28px; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- ── HEADER ── -->
+<div class="doc-header">
+  <div class="doc-tag">MSA FSB · Xử lý ảnh & Video · Final Project</div>
+  <div class="doc-title">Phân tích mạch máu võng mạc<br>phát hiện dấu hiệu đột quỵ</div>
+  <div class="doc-sub">Tài liệu kỹ thuật đầy đủ — pipeline 5 tầng từ ảnh fundus thô đến phân loại RAO/Normal, bao gồm cơ sở lâm sàng và hướng implement cho từng bước.</div>
+</div>
+
+<!-- ══════════════════════════════════════
+     OVERVIEW PIPELINE
+═══════════════════════════════════════ -->
+<div class="section">
+  <div class="section-label">Tổng quan</div>
+  <div class="section-title">Luồng xử lý đầu cuối</div>
+  <div class="section-desc">5 tầng xử lý độc lập, mỗi tầng có mục tiêu lâm sàng rõ ràng. IP trích xuất — ML kết hợp.</div>
+
+  <div class="svg-card">
+    <svg width="100%" viewBox="0 0 760 100" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="#4a5568" stroke-width="1.5" stroke-linecap="round"/>
+        </marker>
+      </defs>
+      <!-- Stage boxes -->
+      <g>
+        <rect x="8" y="20" width="120" height="60" rx="8" fill="#1e2535" stroke="rgba(45,212,191,0.4)" stroke-width="1"/>
+        <text x="68" y="46" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#2dd4bf">TẦNG 1</text>
+        <text x="68" y="62" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#e8eaf0" font-weight="500">Tiền xử lý</text>
+        <text x="68" y="75" text-anchor="middle" font-family="DM Sans" font-size="9" fill="#7a8499">FOV · CLAHE</text>
+      </g>
+      <line x1="128" y1="50" x2="148" y2="50" stroke="#4a5568" stroke-width="1" marker-end="url(#ar)"/>
+      <g>
+        <rect x="148" y="20" width="120" height="60" rx="8" fill="#1e2535" stroke="rgba(74,158,255,0.4)" stroke-width="1"/>
+        <text x="208" y="46" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#4a9eff">TẦNG 2</text>
+        <text x="208" y="62" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#e8eaf0" font-weight="500">Phân đoạn</text>
+        <text x="208" y="75" text-anchor="middle" font-family="DM Sans" font-size="9" fill="#7a8499">Frangi · Skeleton</text>
+      </g>
+      <line x1="268" y1="50" x2="288" y2="50" stroke="#4a5568" stroke-width="1" marker-end="url(#ar)"/>
+      <g>
+        <rect x="288" y="20" width="120" height="60" rx="8" fill="#1e2535" stroke="rgba(245,158,11,0.4)" stroke-width="1"/>
+        <text x="348" y="46" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#f59e0b">TẦNG 3</text>
+        <text x="348" y="62" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#e8eaf0" font-weight="500">Giải phẫu</text>
+        <text x="348" y="75" text-anchor="middle" font-family="DM Sans" font-size="9" fill="#7a8499">OD · Zone B · A/V</text>
+      </g>
+      <line x1="408" y1="50" x2="428" y2="50" stroke="#4a5568" stroke-width="1" marker-end="url(#ar)"/>
+      <g>
+        <rect x="428" y="20" width="120" height="60" rx="8" fill="#1e2535" stroke="rgba(167,139,250,0.4)" stroke-width="1"/>
+        <text x="488" y="46" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#a78bfa">TẦNG 4</text>
+        <text x="488" y="62" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#e8eaf0" font-weight="500">Feature Extraction</text>
+        <text x="488" y="75" text-anchor="middle" font-family="DM Sans" font-size="9" fill="#7a8499">AVR · Tort · Gap</text>
+      </g>
+      <line x1="548" y1="50" x2="568" y2="50" stroke="#4a5568" stroke-width="1" marker-end="url(#ar)"/>
+      <g>
+        <rect x="568" y="20" width="120" height="60" rx="8" fill="#1e2535" stroke="rgba(34,197,94,0.4)" stroke-width="1"/>
+        <text x="628" y="46" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#22c55e">TẦNG 5</text>
+        <text x="628" y="62" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#e8eaf0" font-weight="500">Phân loại</text>
+        <text x="628" y="75" text-anchor="middle" font-family="DM Sans" font-size="9" fill="#7a8499">RandomForest · ROC</text>
+      </g>
+      <line x1="688" y1="50" x2="708" y2="50" stroke="#4a5568" stroke-width="1" marker-end="url(#ar)"/>
+      <g>
+        <rect x="708" y="20" width="44" height="60" rx="8" fill="rgba(239,68,68,0.1)" stroke="rgba(239,68,68,0.4)" stroke-width="1"/>
+        <text x="730" y="53" text-anchor="middle" font-family="DM Sans" font-size="9" fill="#ef4444" font-weight="500">RAO</text>
+        <text x="730" y="66" text-anchor="middle" font-family="DM Sans" font-size="9" fill="#7a8499">/ Norm</text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="why-box">
+    <div class="why-label">Nguyên tắc thiết kế</div>
+    <p>IP (Image Processing) chịu trách nhiệm <strong>trích xuất các con số có ý nghĩa lâm sàng</strong> — AVR, tortuosity, gap score. ML chịu trách nhiệm <strong>kết hợp các con số đó thành một quyết định duy nhất</strong>. Đây là phân công đúng: mỗi tầng làm đúng thứ mình giỏi, và toàn bộ pipeline có thể giải thích được trước hội đồng.</p>
+  </div>
+</div>
+
+<hr class="divider"/>
+
+<!-- ══════════════════════════════════════
+     TẦNG 1 — TIỀN XỬ LÝ
+═══════════════════════════════════════ -->
+<div class="section">
+  <div class="stage-badge">
+    <span style="width:8px;height:8px;border-radius:50%;background:#2dd4bf;display:inline-block;"></span>
+    Tầng 1
+  </div>
+  <div class="section-title">Tiền xử lý</div>
+  <div class="section-desc">Chuẩn bị ảnh fundus cho các bước xử lý tiếp theo. Hai nhánh chạy song song vì có mục đích khác nhau.</div>
+
+  <div class="svg-card">
+    <svg width="100%" viewBox="0 0 760 260" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="a1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="#4a5568" stroke-width="1.5" stroke-linecap="round"/>
+        </marker>
+      </defs>
+      <!-- Input -->
+      <rect x="280" y="10" width="200" height="50" rx="8" fill="#1e2535" stroke="rgba(255,255,255,0.12)" stroke-width="1"/>
+      <text x="380" y="31" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#7a8499">INPUT</text>
+      <text x="380" y="47" text-anchor="middle" font-family="DM Sans" font-size="13" fill="#e8eaf0" font-weight="500">Fundus RGB image</text>
+
+      <!-- Split lines -->
+      <line x1="300" y1="60" x2="180" y2="100" stroke="#2d3748" stroke-width="1" marker-end="url(#a1)"/>
+      <line x1="460" y1="60" x2="570" y2="100" stroke="#2d3748" stroke-width="1" marker-end="url(#a1)"/>
+
+      <!-- FOV box -->
+      <rect x="60" y="100" width="220" height="80" rx="8" fill="#131a26" stroke="rgba(45,212,191,0.35)" stroke-width="1"/>
+      <text x="170" y="122" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#2dd4bf">FOV MASK</text>
+      <text x="170" y="140" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">Otsu threshold → binary</text>
+      <text x="170" y="157" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">Morphological closing</text>
+      <text x="170" y="172" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">→ loại viền đen ngoài ảnh</text>
+
+      <!-- Green + CLAHE box -->
+      <rect x="470" y="100" width="230" height="80" rx="8" fill="#131a26" stroke="rgba(45,212,191,0.35)" stroke-width="1"/>
+      <text x="585" y="122" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#2dd4bf">GREEN CHANNEL + CLAHE</text>
+      <text x="585" y="140" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">img[:,:,1] — hemoglobin</text>
+      <text x="585" y="157" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">CLAHE clipLimit=2.5 tile=8×8</text>
+      <text x="585" y="172" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">→ tăng tương phản mạch máu</text>
+
+      <!-- Merge lines -->
+      <line x1="170" y1="180" x2="280" y2="220" stroke="#2d3748" stroke-width="1" marker-end="url(#a1)"/>
+      <line x1="585" y1="180" x2="480" y2="220" stroke="#2d3748" stroke-width="1" marker-end="url(#a1)"/>
+
+      <!-- Output -->
+      <rect x="240" y="220" width="280" height="36" rx="8" fill="#1e2535" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+      <text x="380" y="243" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#e8eaf0">Enhanced green + FOV mask</text>
+    </svg>
+  </div>
+
+  <div class="prose">
+    <p><strong>FOV Mask</strong> — ảnh fundus có viền đen tròn lớn. Nếu không mask đi, CLAHE sẽ cố "cân bằng" cả vùng đen, làm méo histogram toàn ảnh và tạo artifacts ở rìa. Cách làm: Otsu threshold → lấy vùng liên thông lớn nhất → morphological closing để lấp lỗ nhỏ → đó là FOV.</p>
+    <p><strong>Green channel</strong> — hemoglobin hấp thụ ánh xanh lá (~540nm) mạnh nhất trong RGB. Mạch máu sẽ <em>tối hơn nền nhiều nhất</em> ở kênh này — độ tương phản cao nhất. Red channel thì mạch và nền quá gần nhau, khó phân biệt.</p>
+    <p><strong>CLAHE</strong> — khác histogram equalization thông thường ở chỗ xử lý cục bộ theo từng tile 8×8. Ảnh fundus bị chiếu sáng không đều (trung tâm sáng hơn ngoại vi). Nếu equalize toàn ảnh thì vùng tối bị khuếch đại nhiễu. <code>clipLimit=2.5</code> là ngưỡng cắt histogram — tham số được cite nhiều nhất trong retinal imaging literature.</p>
+  </div>
+</div>
+
+<hr class="divider"/>
+
+<!-- ══════════════════════════════════════
+     TẦNG 2 — PHÂN ĐOẠN
+═══════════════════════════════════════ -->
+<div class="section">
+  <div class="stage-badge">
+    <span style="width:8px;height:8px;border-radius:50%;background:#4a9eff;display:inline-block;"></span>
+    Tầng 2
+  </div>
+  <div class="section-title">Phân đoạn mạch máu</div>
+  <div class="section-desc">Tách mạch máu khỏi nền và tạo skeleton — đường tâm 1px là cơ sở cho mọi đo lường phía sau.</div>
+
+  <div class="svg-card">
+    <svg width="100%" viewBox="0 0 760 300" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="a2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="#4a5568" stroke-width="1.5" stroke-linecap="round"/>
+        </marker>
+      </defs>
+      <!-- Input -->
+      <rect x="240" y="8" width="280" height="40" rx="8" fill="#1e2535" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+      <text x="380" y="33" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">Enhanced green + FOV mask</text>
+
+      <line x1="300" y1="48" x2="190" y2="88" stroke="#2d3748" stroke-width="1" marker-end="url(#a2)"/>
+      <line x1="460" y1="48" x2="560" y2="88" stroke="#2d3748" stroke-width="1" marker-end="url(#a2)"/>
+
+      <!-- Frangi -->
+      <rect x="60" y="88" width="230" height="90" rx="8" fill="#131a26" stroke="rgba(74,158,255,0.35)" stroke-width="1"/>
+      <text x="175" y="110" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#4a9eff">FRANGI VESSELNESS</text>
+      <text x="175" y="130" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">Hessian eigenvalue λ₁, λ₂</text>
+      <text x="175" y="148" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">Multi-scale σ = 1..4px</text>
+      <text x="175" y="166" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">Detect ống mạch theo hình ống</text>
+
+      <!-- Threshold Hysteresis -->
+      <rect x="450" y="88" width="250" height="90" rx="8" fill="#131a26" stroke="rgba(74,158,255,0.35)" stroke-width="1"/>
+      <text x="575" y="110" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#4a9eff">HYSTERESIS THRESHOLDING</text>
+      <text x="575" y="130" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">Ngưỡng kép: Cao (88%) làm hạt giống</text>
+      <text x="575" y="148" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">Thấp (72%) để kết nối các đoạn đứt</text>
+      <text x="575" y="166" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">Giữ mạch liên tục trong ca RAO</text>
+
+      <line x1="175" y1="178" x2="280" y2="218" stroke="#2d3748" stroke-width="1" marker-end="url(#a2)"/>
+      <line x1="575" y1="178" x2="480" y2="218" stroke="#2d3748" stroke-width="1" marker-end="url(#a2)"/>
+
+      <!-- Vessel mask -->
+      <rect x="220" y="218" width="320" height="50" rx="8" fill="#1e2535" stroke="rgba(74,158,255,0.2)" stroke-width="1"/>
+      <text x="380" y="238" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#e8eaf0" font-weight="500">Vessel binary mask</text>
+      <text x="380" y="256" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">Morphological closing → lấp gap nhỏ</text>
+
+      <line x1="310" y1="268" x2="220" y2="290" stroke="#2d3748" stroke-width="1" marker-end="url(#a2)"/>
+      <line x1="450" y1="268" x2="540" y2="290" stroke="#2d3748" stroke-width="1" marker-end="url(#a2)"/>
+
+      <!-- Skeleton & Mask kept -->
+      <text x="175" y="300" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#a78bfa">SKELETON (Zhang-Suen)</text>
+      <text x="590" y="300" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#7a8499">MASK → đo đường kính</text>
+    </svg>
+  </div>
+
+  <div class="prose">
+    <p><strong>Frangi filter</strong> — được thiết kế chính xác cho bài toán vessel detection. Tại mỗi pixel, tính ma trận Hessian (đạo hàm bậc 2), phân tích eigenvalue λ₁, λ₂. Pixel trên mạch máu: λ₁ ≈ 0 (dọc theo mạch), λ₂ lớn âm (vuông góc, độ cong cao). Tỷ lệ này tạo vesselness score. Multi-scale σ=1..4px để bắt cả mạch nhỏ lẫn mạch lớn.</p>
+    <p><strong>Hysteresis Thresholding</strong> — thay thế cho Adaptive Threshold cũ. Dùng 2 ngưỡng: ngưỡng cao (percentile 88) để xác định các pixel chắc chắn là mạch (seeds), và ngưỡng thấp (percentile 72) để kết nối các pixel yếu bám vào hạt giống. Giúp khắc phục triệt để lỗi "đứt gãy mạch máu" do tín hiệu nhạt màu trong các trường hợp tắc nghẽn động mạch (RAO).</p>
+    <p><strong>Skeletonization (Zhang-Suen)</strong> — lý do không dùng connected components: mạch là network liên thông, connected components cho ra 1–3 blob khổng lồ. Skeleton thinning ép network xuống còn đường 1px, giữ nguyên topology. Thư viện <code>skan</code> đọc skeleton như graph — mỗi đoạn giữa hai junction là một edge đo được độc lập.</p>
+  </div>
+
+  <div class="why-box">
+    <div class="why-label">Tại sao Frangi thay vì Adaptive Threshold đơn thuần?</div>
+    <p>Adaptive threshold không phân biệt được mạch máu (ống tròn có gradient đặc trưng) với noise hay artifact tròn khác. Frangi encode hình học "ống" vào toán học — chỉ trả về cao score cho cấu trúc có hình dạng tubular thực sự. Mạch máu mảnh ở ngoại vi được bắt tốt hơn đáng kể.</p>
+  </div>
+</div>
+
+<hr class="divider"/>
+
+<!-- ══════════════════════════════════════
+     TẦNG 3 — GIẢI PHẪU HỌC
+═══════════════════════════════════════ -->
+<div class="section">
+  <div class="stage-badge">
+    <span style="width:8px;height:8px;border-radius:50%;background:#f59e0b;display:inline-block;"></span>
+    Tầng 3
+  </div>
+  <div class="section-title">Giải phẫu học — Optic Disc & Zone B</div>
+  <div class="section-desc">Tầng quan trọng nhất mà pipeline cũ hoàn toàn thiếu. Không có OD, mọi chỉ số đo được đều thiếu cơ sở lâm sàng để so sánh.</div>
+
+  <!-- OD explanation SVG -->
+  <div class="svg-card">
+    <svg width="100%" viewBox="0 0 760 340" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="a3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="#4a5568" stroke-width="1.5" stroke-linecap="round"/>
+        </marker>
+        <clipPath id="eye1"><circle cx="190" cy="170" r="130"/></clipPath>
+        <clipPath id="eye2"><circle cx="560" cy="170" r="130"/></clipPath>
+      </defs>
+
+      <!-- Labels top -->
+      <text x="190" y="18" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#ef4444">✕ Không có OD — AVR vô nghĩa</text>
+      <text x="560" y="18" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#22c55e">✓ Có OD — AVR đo trong Zone B</text>
+
+      <!-- Eye 1 bg -->
+      <circle cx="190" cy="170" r="130" fill="#1a0e0a" stroke="#2d1a12" stroke-width="1"/>
+      <g clip-path="url(#eye1)">
+        <path d="M190 170 Q160 130 130 105" fill="none" stroke="#c0392b" stroke-width="3"/>
+        <path d="M190 170 Q220 120 250 95" fill="none" stroke="#c0392b" stroke-width="3"/>
+        <path d="M190 170 Q155 190 120 210" fill="none" stroke="#c0392b" stroke-width="2.5"/>
+        <path d="M190 170 Q225 200 260 225" fill="none" stroke="#c0392b" stroke-width="2.5"/>
+        <path d="M190 170 Q165 145 140 115" fill="none" stroke="#2471a3" stroke-width="5"/>
+        <path d="M190 170 Q215 140 240 110" fill="none" stroke="#2471a3" stroke-width="5"/>
+        <path d="M190 170 Q160 185 125 200" fill="none" stroke="#2471a3" stroke-width="4"/>
+        <path d="M190 170 Q220 190 250 210" fill="none" stroke="#2471a3" stroke-width="4"/>
+      </g>
+      <!-- Random measurement marks -->
+      <line x1="118" y1="125" x2="118" y2="142" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2"/>
+      <line x1="255" y1="110" x2="255" y2="127" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2"/>
+      <text x="100" y="155" font-family="DM Sans" font-size="11" fill="#ef4444">?</text>
+      <text x="268" y="125" font-family="DM Sans" font-size="11" fill="#ef4444">?</text>
+      <rect x="120" y="275" width="140" height="26" rx="4" fill="rgba(239,68,68,0.1)" stroke="rgba(239,68,68,0.3)" stroke-width="1"/>
+      <text x="190" y="293" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#ef4444">Đo ở đâu? Không chuẩn</text>
+
+      <!-- Divider -->
+      <line x1="380" y1="30" x2="380" y2="320" stroke="#2d3748" stroke-width="1" stroke-dasharray="4 4"/>
+
+      <!-- Eye 2 bg -->
+      <circle cx="560" cy="170" r="130" fill="#0a1a0e" stroke="#12291a" stroke-width="1"/>
+      <g clip-path="url(#eye2)">
+        <path d="M560 170 Q530 130 500 105" fill="none" stroke="#c0392b" stroke-width="3"/>
+        <path d="M560 170 Q590 120 620 95" fill="none" stroke="#c0392b" stroke-width="3"/>
+        <path d="M560 170 Q525 190 490 210" fill="none" stroke="#c0392b" stroke-width="2.5"/>
+        <path d="M560 170 Q595 200 630 225" fill="none" stroke="#c0392b" stroke-width="2.5"/>
+        <path d="M560 170 Q535 145 510 115" fill="none" stroke="#2471a3" stroke-width="5"/>
+        <path d="M560 170 Q585 140 610 110" fill="none" stroke="#2471a3" stroke-width="5"/>
+        <path d="M560 170 Q530 185 495 200" fill="none" stroke="#2471a3" stroke-width="4"/>
+        <path d="M560 170 Q590 190 620 210" fill="none" stroke="#2471a3" stroke-width="4"/>
+      </g>
+      <!-- OD circle -->
+      <circle cx="560" cy="170" r="24" fill="#b8860b" stroke="#f59e0b" stroke-width="1.5" fill-opacity="0.6"/>
+      <text x="560" y="175" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#f59e0b">OD</text>
+      <!-- Zone A inner boundary -->
+      <circle cx="560" cy="170" r="36" fill="none" stroke="#22c55e" stroke-width="0.8" stroke-dasharray="3 2" opacity="0.5"/>
+      <!-- Zone B -->
+      <circle cx="560" cy="170" r="72" fill="rgba(34,197,94,0.06)" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="5 3"/>
+      <!-- Zone B label -->
+      <text x="632" y="128" font-family="IBM Plex Mono" font-size="9" fill="#22c55e">Zone B</text>
+      <line x1="628" y1="130" x2="615" y2="140" stroke="#22c55e" stroke-width="0.5"/>
+      <!-- Measurement marks in Zone B -->
+      <line x1="510" y1="142" x2="510" y2="158" stroke="#c0392b" stroke-width="2"/>
+      <text x="498" y="152" font-family="DM Sans" font-size="9" fill="#c0392b" text-anchor="end">Da</text>
+      <line x1="516" y1="155" x2="516" y2="169" stroke="#2471a3" stroke-width="3.5"/>
+      <text x="504" y="166" font-family="DM Sans" font-size="9" fill="#2471a3" text-anchor="end">Dv</text>
+      <!-- AVR formula -->
+      <rect x="460" y="278" width="160" height="36" rx="6" fill="rgba(34,197,94,0.08)" stroke="rgba(34,197,94,0.3)" stroke-width="1"/>
+      <text x="540" y="294" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#22c55e">AVR = Da / Dv</text>
+      <text x="540" y="308" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">đo trong Zone B</text>
+    </svg>
+  </div>
+
+  <div class="why-box">
+    <div class="why-label">Tại sao phải detect Optic Disc trước khi tính AVR?</div>
+    <p>Mạch máu võng mạc không đồng đều theo vị trí — mạch gần OD to hơn mạch ngoại vi. Nếu đo tại vùng ngẫu nhiên, AVR của hai bệnh nhân khỏe mạnh sẽ ra hai con số khác nhau chỉ vì chụp ảnh ở góc khác. Chuẩn <strong>Zone B (Knudtson 2003)</strong> — annular ring từ 0.5 đến 1.0 lần đường kính OD tính từ tâm OD — là quy ước được dùng trong toàn bộ nghiên cứu retinal vascular biomarker. Không đo trong Zone B, AVR không thể reference với bất kỳ ngưỡng lâm sàng nào.</p>
+  </div>
+
+  <div class="svg-card">
+    <svg width="100%" viewBox="0 0 760 260" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="a3b" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="#4a5568" stroke-width="1.5" stroke-linecap="round"/>
+        </marker>
+      </defs>
+      <!-- Skeleton + Vessel mask inputs -->
+      <rect x="80" y="10" width="180" height="40" rx="8" fill="#1e2535" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+      <text x="170" y="35" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">Skeleton graph</text>
+      <rect x="500" y="10" width="180" height="40" rx="8" fill="#1e2535" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+      <text x="590" y="35" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">Vessel mask</text>
+
+      <line x1="170" y1="50" x2="170" y2="90" stroke="#2d3748" stroke-width="1" marker-end="url(#a3b)"/>
+      <line x1="590" y1="50" x2="590" y2="90" stroke="#2d3748" stroke-width="1" marker-end="url(#a3b)"/>
+
+      <!-- OD detect -->
+      <rect x="50" y="90" width="240" height="80" rx="8" fill="#131a26" stroke="rgba(245,158,11,0.35)" stroke-width="1"/>
+      <text x="170" y="112" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#f59e0b">OPTIC DISC DETECTION</text>
+      <text x="170" y="132" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">GaussianBlur(51,51) → minMaxLoc</text>
+      <text x="170" y="150" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">od_radius ≈ 8% image width</text>
+      <text x="170" y="164" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">→ od_center, od_radius</text>
+
+      <!-- Zone B -->
+      <rect x="470" y="90" width="240" height="80" rx="8" fill="#131a26" stroke="rgba(245,158,11,0.35)" stroke-width="1"/>
+      <text x="590" y="112" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#f59e0b">ZONE B MASK</text>
+      <text x="590" y="132" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">inner_r = od_radius × 1.0</text>
+      <text x="590" y="150" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">outer_r = od_radius × 2.0</text>
+      <text x="590" y="164" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">Annular ring theo Knudtson 2003</text>
+
+      <line x1="170" y1="170" x2="280" y2="210" stroke="#2d3748" stroke-width="1" marker-end="url(#a3b)"/>
+      <line x1="590" y1="170" x2="480" y2="210" stroke="#2d3748" stroke-width="1" marker-end="url(#a3b)"/>
+
+      <!-- A/V classifier -->
+      <rect x="210" y="210" width="340" height="46" rx="8" fill="#1e2535" stroke="rgba(167,139,250,0.3)" stroke-width="1"/>
+      <text x="380" y="230" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#a78bfa">A/V SVM CLASSIFIER</text>
+      <text x="380" y="248" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#c8ccd8">R/B ratio pseudo-label → SVM(rbf) → graph propagation</text>
+    </svg>
+  </div>
+
+  <div class="prose">
+    <p><strong>OD Detection (đơn giản, đủ để demo)</strong> — OD là vùng sáng nhất trong FOV vì đây là điểm mạch máu đi vào mắt, không có tế bào cảm quang che khuất. Gaussian blur kernel 51×51 trước khi tìm max để tránh bị lừa bởi reflection đơn lẻ.</p>
+    <p><strong>A/V Classification</strong> — artery chứa hemoglobin oxygenated → đỏ hơn → R/B ratio cao hơn. Top 35% R/B → artery (xấp xỉ anatomy thực: ~35% mạng mạch là artery). Sau SVM, dùng <em>graph propagation</em>: lan nhãn theo skeleton graph — đoạn mạch kết nối với artery có prior cao là artery. Fix vấn đề "all-artery/all-vein" images.</p>
+  </div>
+</div>
+
+<hr class="divider"/>
+
+<!-- ══════════════════════════════════════
+     TẦNG 4 — FEATURE EXTRACTION
+═══════════════════════════════════════ -->
+<div class="section">
+  <div class="stage-badge">
+    <span style="width:8px;height:8px;border-radius:50%;background:#a78bfa;display:inline-block;"></span>
+    Tầng 4
+  </div>
+  <div class="section-title">Trích xuất đặc trưng lâm sàng</div>
+  <div class="section-desc">6 dấu hiệu hình thái RAO, mỗi cái trả lời một câu hỏi lâm sàng khác nhau. Không dấu hiệu nào đủ một mình.</div>
+
+  <div class="svg-card">
+    <svg width="100%" viewBox="0 0 760 460" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="a4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="#4a5568" stroke-width="1.5" stroke-linecap="round"/>
+        </marker>
+      </defs>
+      <!-- Inputs -->
+      <rect x="60" y="8" width="150" height="36" rx="6" fill="#1e2535" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+      <text x="135" y="31" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#c8ccd8">Artery segments</text>
+      <rect x="305" y="8" width="150" height="36" rx="6" fill="#1e2535" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+      <text x="380" y="31" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#c8ccd8">Vein segments</text>
+      <rect x="550" y="8" width="150" height="36" rx="6" fill="#1e2535" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+      <text x="625" y="31" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#c8ccd8">Vessel mask</text>
+
+      <line x1="135" y1="44" x2="135" y2="74" stroke="#2d3748" stroke-width="1" marker-end="url(#a4)"/>
+      <line x1="380" y1="44" x2="380" y2="74" stroke="#2d3748" stroke-width="1" marker-end="url(#a4)"/>
+      <line x1="625" y1="44" x2="625" y2="74" stroke="#2d3748" stroke-width="1" marker-end="url(#a4)"/>
+
+      <!-- Feature group 1: Caliber -->
+      <rect x="20" y="74" width="210" height="120" rx="8" fill="#131a26" stroke="rgba(167,139,250,0.35)" stroke-width="1"/>
+      <text x="125" y="96" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#a78bfa">VASCULAR CALIBER</text>
+      <text x="125" y="116" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#c8ccd8">AVR = mean(Da)/mean(Dv)</text>
+      <text x="125" y="133" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">Normal ≈ 0.66 | Nguy cơ &lt; 0.50</text>
+      <text x="125" y="153" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#c8ccd8">CRAE, CRVE (Knudtson)</text>
+      <text x="125" y="170" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#c8ccd8">Caliber variation (std/mean)</text>
+      <text x="125" y="186" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">Cross-section ⊥ skeleton</text>
+
+      <!-- Feature group 2: Geometry -->
+      <rect x="275" y="74" width="210" height="120" rx="8" fill="#131a26" stroke="rgba(167,139,250,0.35)" stroke-width="1"/>
+      <text x="380" y="96" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#a78bfa">VASCULAR GEOMETRY</text>
+      <text x="380" y="116" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#c8ccd8">Tortuosity = arc / chord</text>
+      <text x="380" y="133" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">Normal ≈ 1.05–1.20</text>
+      <text x="380" y="153" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#c8ccd8">StdTortuosity (variance)</text>
+      <text x="380" y="170" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#c8ccd8">Fractal dimension (box-count)</text>
+      <text x="380" y="186" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">Từng segment trong skan graph</text>
+
+      <!-- Feature group 3: Integrity -->
+      <rect x="530" y="74" width="210" height="120" rx="8" fill="#131a26" stroke="rgba(167,139,250,0.35)" stroke-width="1"/>
+      <text x="635" y="96" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#a78bfa">VASCULAR INTEGRITY</text>
+      <text x="635" y="116" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#c8ccd8">Discontinuity score</text>
+      <text x="635" y="133" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">closing − skeleton (weighted)</text>
+      <text x="635" y="153" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#c8ccd8">Endpoint gap analysis</text>
+      <text x="635" y="170" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#c8ccd8">Retinal whitening score</text>
+      <text x="635" y="186" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">Vessel density (px/FOV area)</text>
+
+      <!-- Merge to feature vector -->
+      <line x1="125" y1="194" x2="280" y2="240" stroke="#2d3748" stroke-width="1" marker-end="url(#a4)"/>
+      <line x1="380" y1="194" x2="380" y2="240" stroke="#2d3748" stroke-width="1" marker-end="url(#a4)"/>
+      <line x1="635" y1="194" x2="480" y2="240" stroke="#2d3748" stroke-width="1" marker-end="url(#a4)"/>
+
+      <!-- Normalize -->
+      <rect x="190" y="240" width="380" height="50" rx="8" fill="#1e2535" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+      <text x="380" y="260" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#7a8499">NORMALIZE</text>
+      <text x="380" y="278" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">StandardScaler — AVR, tortuosity, density có scale khác nhau</text>
+
+      <line x1="380" y1="290" x2="380" y2="320" stroke="#2d3748" stroke-width="1" marker-end="url(#a4)"/>
+
+      <!-- Feature vector -->
+      <rect x="160" y="320" width="440" height="60" rx="8" fill="#1e2535" stroke="rgba(167,139,250,0.3)" stroke-width="1"/>
+      <text x="380" y="344" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#a78bfa">FEATURE VECTOR 8–10 CHIỀU</text>
+      <text x="380" y="364" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#c8ccd8">[AVR, CRAE, CRVE, tortuosity, std_tort, fractal, discontinuity, whitening]</text>
+
+      <!-- Clinical thresholds reference -->
+      <rect x="20" y="400" width="720" height="54" rx="8" fill="rgba(245,158,11,0.05)" stroke="rgba(245,158,11,0.2)" stroke-width="1"/>
+      <text x="380" y="420" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#f59e0b">NGƯỠNG LÂM SÀNG (Knudtson 2003)</text>
+      <text x="180" y="440" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#c8ccd8">AVR normal ≈ 0.66</text>
+      <text x="380" y="440" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#c8ccd8">Tortuosity &gt; 1.5 → bất thường</text>
+      <text x="580" y="440" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#c8ccd8">Discontinuity &gt; 0.15 → đáng ngờ</text>
+      <text x="180" y="450" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#ef4444">nguy cơ &lt; 0.50</text>
+    </svg>
+  </div>
+
+  <!-- RAO Signs breakdown -->
+  <div class="section-label" style="margin-top:32px;">Dấu hiệu hình thái RAO — chi tiết từng loại</div>
+  <div class="svg-card">
+    <svg width="100%" viewBox="0 0 760 480" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="a4c" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="#4a5568" stroke-width="1.5" stroke-linecap="round"/>
+        </marker>
+      </defs>
+      <!-- Sign 1: Hẹp artery -->
+      <rect x="20" y="20" width="340" height="100" rx="8" fill="#131a26" stroke="rgba(251,113,133,0.35)" stroke-width="1"/>
+      <text x="190" y="42" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#fb7185">DẤU HIỆU 1 — HẸP ĐỘNG MẠCH</text>
+      <text x="190" y="62" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">Sinh lý: tắc nghẽn → áp lực giảm → lòng mạch co</text>
+      <text x="190" y="80" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">IP: cross-section ⊥ skeleton → AVR &lt; 0.50</text>
+      <text x="190" y="98" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">Đo tại midpoint từng edge trong skan graph</text>
+      <text x="190" y="112" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">Chỉ tính trong Zone B — so sánh được giữa người</text>
+
+      <!-- Sign 2: Đứt đoạn -->
+      <rect x="400" y="20" width="340" height="100" rx="8" fill="#131a26" stroke="rgba(251,113,133,0.35)" stroke-width="1"/>
+      <text x="570" y="42" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#fb7185">DẤU HIỆU 2 — ĐỨT ĐOẠN MẠCH</text>
+      <text x="570" y="62" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">Sinh lý: tắc hoàn toàn → đoạn sau không hiện</text>
+      <text x="570" y="80" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">IP: closing(skel) − skel → gap pixels</text>
+      <text x="570" y="98" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">+ endpoint analysis: 1 láng giềng = endpoint</text>
+      <text x="570" y="112" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">Vector tangent → tìm cặp gap song song ngược chiều</text>
+
+      <!-- Sign 3: Tortuosity -->
+      <rect x="20" y="142" width="340" height="100" rx="8" fill="#131a26" stroke="rgba(167,139,250,0.35)" stroke-width="1"/>
+      <text x="190" y="164" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#a78bfa">DẤU HIỆU 3 — TĂNG ĐỘ XOẮN</text>
+      <text x="190" y="184" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">Sinh lý: tăng huyết áp → thành mạch mất đàn hồi</text>
+      <text x="190" y="202" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">IP: arc_length / chord_length từng segment</text>
+      <text x="190" y="220" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">Normal 1.05–1.20 | Bất thường &gt; 1.5</text>
+      <text x="190" y="234" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">skan graph → arc/chord per edge</text>
+
+      <!-- Sign 4: Retinal whitening -->
+      <rect x="400" y="142" width="340" height="100" rx="8" fill="#131a26" stroke="rgba(167,139,250,0.35)" stroke-width="1"/>
+      <text x="570" y="164" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#a78bfa">DẤU HIỆU 4 — PHÙ TRẮNG VÕNG MẠC</text>
+      <text x="570" y="184" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">Sinh lý: thiếu oxy → tế bào phù nề, vùng trắng</text>
+      <text x="570" y="202" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">IP: high-intensity blob ngoài OD + vessel mask</text>
+      <text x="570" y="220" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">connectedComponentsWithStats + area filter</text>
+      <text x="570" y="234" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">Đặc trưng nhất của CRAO cấp tính</text>
+
+      <!-- Sign 5: Fractal -->
+      <rect x="20" y="264" width="340" height="100" rx="8" fill="#131a26" stroke="rgba(45,212,191,0.35)" stroke-width="1"/>
+      <text x="190" y="286" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#2dd4bf">DẤU HIỆU 5 — GIẢM MẬT ĐỘ MẠCH</text>
+      <text x="190" y="306" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">Sinh lý: mạch nhánh nhỏ xẹp → mạng lưới thưa</text>
+      <text x="190" y="324" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">IP: vessel_pixels / FOV_area = density</text>
+      <text x="190" y="342" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">Fractal dimension: box-counting log-log slope</text>
+      <text x="190" y="356" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">RAO → fractal D thấp hơn normal</text>
+
+      <!-- Sign 6: AVR asymmetry -->
+      <rect x="400" y="264" width="340" height="100" rx="8" fill="#131a26" stroke="rgba(45,212,191,0.35)" stroke-width="1"/>
+      <text x="570" y="286" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#2dd4bf">DẤU HIỆU 6 — MẤT CÂN ĐỐI A/V</text>
+      <text x="570" y="306" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">Sinh lý: artery teo, vein giãn bù trừ</text>
+      <text x="570" y="324" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">IP: CRAE riêng biệt + CRVE riêng biệt</text>
+      <text x="570" y="342" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">Không chỉ ratio mà còn absolute value</text>
+      <text x="570" y="356" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">CRVE tăng → venous congestion rõ</text>
+
+      <!-- Bottom note -->
+      <rect x="20" y="386" width="720" height="80" rx="8" fill="rgba(167,139,250,0.05)" stroke="rgba(167,139,250,0.2)" stroke-width="1"/>
+      <text x="380" y="408" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#a78bfa">TẠI SAO PHẢI KẾT HỢP CẢ 6?</text>
+      <text x="380" y="428" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">Đứt đoạn đơn lẻ → có thể do ảnh mờ (false positive)</text>
+      <text x="380" y="446" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">AVR thấp đơn lẻ → variation bình thường giữa người (false alarm)</text>
+      <text x="380" y="460" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#7a8499">Kết hợp 6 dấu hiệu → xác suất chẩn đoán đúng tăng vượt bậc, RandomForest học trọng số từ data</text>
+    </svg>
+  </div>
+
+  <!-- Discontinuity deep dive -->
+  <div class="section-label" style="margin-top:32px;">Chi tiết — Morphological Closing & Discontinuity</div>
+  <div class="svg-card">
+    <svg width="100%" viewBox="0 0 760 320" xmlns="http://www.w3.org/2000/svg">
+      <!-- Step headers -->
+      <text x="100" y="22" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#4a9eff">BƯỚC 1 — SKELETON GỐC</text>
+      <text x="380" y="22" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#22c55e">BƯỚC 2 — CLOSING</text>
+      <text x="640" y="22" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#f59e0b">BƯỚC 3 — GAP = CLOSING − SKELETON</text>
+
+      <!-- Skeleton canvas 1 -->
+      <rect x="20" y="34" width="160" height="140" rx="8" fill="#060810" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+      <!-- Vessel with gap -->
+      <path d="M30 104 Q60 102 85 102" fill="none" stroke="#4a9eff" stroke-width="2" stroke-linecap="round"/>
+      <path d="M115 102 Q140 102 170 100" fill="none" stroke="#4a9eff" stroke-width="2" stroke-linecap="round"/>
+      <!-- Gap visual -->
+      <line x1="87" y1="102" x2="113" y2="102" stroke="#2d3748" stroke-width="1" stroke-dasharray="3 3"/>
+      <text x="100" y="95" text-anchor="middle" font-family="DM Sans" font-size="9" fill="#ef4444">gap ~26px</text>
+      <!-- Branch -->
+      <path d="M85 102 Q82 80 76 62" fill="none" stroke="#4a9eff" stroke-width="2" stroke-linecap="round"/>
+      <!-- Small vessel + blurry gap -->
+      <path d="M40 140 Q70 138 90 135" fill="none" stroke="#4a9eff" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M105 133 Q125 130 160 128" fill="none" stroke="#4a9eff" stroke-width="1.5" stroke-linecap="round" opacity="0.5"/>
+      <ellipse cx="100" cy="133" rx="18" ry="14" fill="rgba(239,68,68,0.12)" stroke="rgba(239,68,68,0.3)" stroke-width="0.5"/>
+      <text x="100" y="162" text-anchor="middle" font-family="DM Sans" font-size="9" fill="#7a8499">vùng ảnh mờ</text>
+
+      <!-- Arrow -->
+      <text x="200" y="108" text-anchor="middle" font-family="DM Sans" font-size="18" fill="#2d3748">→</text>
+      <text x="200" y="122" text-anchor="middle" font-family="IBM Plex Mono" font-size="8" fill="#7a8499">Dilation</text>
+      <text x="200" y="133" text-anchor="middle" font-family="IBM Plex Mono" font-size="8" fill="#7a8499">+Erosion</text>
+
+      <!-- Skeleton canvas 2 — after closing -->
+      <rect x="260" y="34" width="160" height="140" rx="8" fill="#060810" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+      <path d="M270 104 Q300 102 395 100" fill="none" stroke="#4a9eff" stroke-width="2" stroke-linecap="round"/>
+      <!-- Gap filled -->
+      <path d="M345 102 Q360 102 395 100" fill="none" stroke="#22c55e" stroke-width="2" stroke-dasharray="5 3" stroke-linecap="round"/>
+      <path d="M322 80 Q318 80 312 62" fill="none" stroke="#4a9eff" stroke-width="2" stroke-linecap="round"/>
+      <!-- Small vessel gap also filled -->
+      <path d="M280 140 Q320 136 420 130" fill="none" stroke="#4a9eff" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M338 135 Q350 134 360 133" fill="none" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="3 2" stroke-linecap="round" opacity="0.5"/>
+      <text x="340" y="162" text-anchor="middle" font-family="DM Sans" font-size="9" fill="#22c55e">gap lấp (xanh)</text>
+
+      <!-- Arrow -->
+      <text x="440" y="108" text-anchor="middle" font-family="DM Sans" font-size="18" fill="#2d3748">→</text>
+      <text x="440" y="122" text-anchor="middle" font-family="IBM Plex Mono" font-size="8" fill="#7a8499">Subtract</text>
+
+      <!-- Canvas 3 — gap pixels -->
+      <rect x="500" y="34" width="240" height="140" rx="8" fill="#060810" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+      <path d="M510 104 Q540 102 565 102" fill="none" stroke="#4a9eff" stroke-width="1.5" stroke-linecap="round" opacity="0.3"/>
+      <path d="M595 102 Q620 102 730 100" fill="none" stroke="#4a9eff" stroke-width="1.5" stroke-linecap="round" opacity="0.3"/>
+      <!-- Gap 1 highlighted -->
+      <path d="M567 102 Q578 102 593 102" fill="none" stroke="#f59e0b" stroke-width="4" stroke-linecap="round"/>
+      <text x="580" y="92" text-anchor="middle" font-family="DM Sans" font-size="9" fill="#f59e0b">contrast cao → weight 0.85</text>
+      <!-- Gap 2 dimmed (blurry) -->
+      <path d="M575 133 Q580 132 588 132" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" opacity="0.3"/>
+      <ellipse cx="582" cy="133" rx="18" ry="12" fill="rgba(239,68,68,0.08)" stroke="rgba(239,68,68,0.2)" stroke-width="0.5"/>
+      <text x="582" y="155" text-anchor="middle" font-family="DM Sans" font-size="9" fill="#7a8499">contrast thấp → weight 0.20</text>
+
+      <!-- Endpoint analysis explanation -->
+      <rect x="20" y="196" width="720" height="110" rx="8" fill="rgba(74,158,255,0.04)" stroke="rgba(74,158,255,0.15)" stroke-width="1"/>
+      <text x="380" y="216" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#4a9eff">ENDPOINT ANALYSIS (bổ sung cho closing) — phương pháp cô giáo đề xuất</text>
+
+      <!-- 1 neighbor = endpoint -->
+      <text x="130" y="240" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#c8ccd8">Skeleton pixel với 1 láng giềng = endpoint</text>
+      <text x="130" y="258" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">2 láng giềng = đoạn giữa (bình thường)</text>
+      <text x="130" y="276" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">3+ láng giềng = junction / phân nhánh</text>
+      <text x="130" y="294" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#ef4444">1 láng giềng trong giữa mạch = đứt!</text>
+
+      <!-- Vector matching -->
+      <line x1="280" y1="220" x2="280" y2="300" stroke="#2d3748" stroke-width="0.5" stroke-dasharray="2 2"/>
+      <text x="520" y="240" text-anchor="middle" font-family="DM Sans" font-size="11" fill="#c8ccd8">Tangent vector tại endpoint (5–10px cuối)</text>
+      <text x="520" y="258" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">Đường thẳng: 2 vector gần song song ngược chiều</text>
+      <text x="520" y="276" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">Đường cong: fit local tangent → cosine similarity</text>
+      <text x="520" y="294" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#22c55e">→ Cặp endpoint khớp = broken vessel candidate</text>
+    </svg>
+  </div>
+
+  <div class="code-block">
+    <pre><span class="cm"># Hướng implement — Weighted Discontinuity Score</span>
+<span class="kw">def</span> <span class="fn">compute_discontinuity</span>(skeleton, original_green, iterations=<span class="nm">3</span>):
+    struct = np.ones((<span class="nm">3</span>, <span class="nm">3</span>), dtype=bool)
+    closed = binary_closing(skeleton, structure=struct, iterations=iterations)
+
+    gap_mask = closed &amp; ~skeleton          <span class="cm"># gap = closing − skeleton</span>
+    gap_coords = np.argwhere(gap_mask)
+
+    weighted_gap = <span class="nm">0.0</span>
+    <span class="kw">for</span> y, x <span class="kw">in</span> gap_coords:
+        patch = original_green[y-<span class="nm">5</span>:y+<span class="nm">6</span>, x-<span class="nm">5</span>:x+<span class="nm">6</span>].astype(float)
+        local_contrast = patch.std()       <span class="cm"># thấp = vùng mờ → discount</span>
+        weighted_gap += local_contrast / <span class="nm">255.0</span>
+
+    score = weighted_gap / skeleton.sum()  <span class="cm"># normalize theo skeleton size</span>
+    <span class="kw">return</span> {<span class="st">"score"</span>: score, <span class="st">"gap_mask"</span>: gap_mask}
+
+<span class="cm"># Hướng implement — Endpoint Analysis</span>
+<span class="kw">def</span> <span class="fn">find_broken_vessels</span>(skeleton, max_gap_px=<span class="nm">40</span>):
+    endpoints = []
+    <span class="kw">for</span> y, x <span class="kw">in</span> np.argwhere(skeleton):
+        neighbors = count_8neighbors(skeleton, y, x)
+        <span class="kw">if</span> neighbors == <span class="nm">1</span>:                   <span class="cm"># endpoint!</span>
+            tangent = compute_tangent(skeleton, y, x, n=<span class="nm">8</span>)
+            endpoints.append((y, x, tangent))
+
+    broken_pairs = []
+    <span class="kw">for</span> i, (y1, x1, t1) <span class="kw">in</span> <span class="fn">enumerate</span>(endpoints):
+        <span class="kw">for</span> y2, x2, t2 <span class="kw">in</span> endpoints[i+<span class="nm">1</span>:]:
+            dist = np.hypot(y2-y1, x2-x1)
+            <span class="kw">if</span> dist &lt; max_gap_px:
+                similarity = cosine_similarity(t1, -t2) <span class="cm"># ngược chiều</span>
+                <span class="kw">if</span> similarity &gt; <span class="nm">0.85</span>:          <span class="cm"># gần song song ngược chiều</span>
+                    broken_pairs.append(((y1,x1),(y2,x2)))
+    <span class="kw">return</span> broken_pairs</pre>
+  </div>
+</div>
+
+<hr class="divider"/>
+
+<!-- ══════════════════════════════════════
+     TẦNG 5 — PHÂN LOẠI
+═══════════════════════════════════════ -->
+<div class="section">
+  <div class="stage-badge">
+    <span style="width:8px;height:8px;border-radius:50%;background:#22c55e;display:inline-block;"></span>
+    Tầng 5
+  </div>
+  <div class="section-title">Phân loại — RandomForest + Threshold Calibration</div>
+  <div class="section-desc">ML không "hiểu ảnh" — chỉ kết hợp 8–10 con số lâm sàng thành một quyết định, với trọng số học từ data.</div>
+
+  <div class="svg-card">
+    <svg width="100%" viewBox="0 0 760 280" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="a5" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="#4a5568" stroke-width="1.5" stroke-linecap="round"/>
+        </marker>
+      </defs>
+      <!-- Input -->
+      <rect x="240" y="8" width="280" height="40" rx="8" fill="#1e2535" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+      <text x="380" y="33" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">Feature vector 8–10D (normalized)</text>
+
+      <line x1="300" y1="48" x2="200" y2="90" stroke="#2d3748" stroke-width="1" marker-end="url(#a5)"/>
+      <line x1="460" y1="48" x2="560" y2="90" stroke="#2d3748" stroke-width="1" marker-end="url(#a5)"/>
+
+      <!-- Training -->
+      <rect x="60" y="90" width="230" height="90" rx="8" fill="#131a26" stroke="rgba(34,197,94,0.35)" stroke-width="1"/>
+      <text x="175" y="112" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#22c55e">TRAINING</text>
+      <text x="175" y="132" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">5-fold Stratified CV</text>
+      <text x="175" y="150" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">class_weight = balanced</text>
+      <text x="175" y="170" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">80/20 holdout split</text>
+
+      <!-- RF model -->
+      <rect x="450" y="90" width="250" height="90" rx="8" fill="#131a26" stroke="rgba(34,197,94,0.35)" stroke-width="1"/>
+      <text x="575" y="112" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#22c55e">RANDOMFOREST</text>
+      <text x="575" y="132" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">n_estimators = 200</text>
+      <text x="575" y="150" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">predict_proba()[:,1]</text>
+      <text x="575" y="170" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">Lý do chọn: feature_importances_</text>
+
+      <line x1="175" y1="180" x2="280" y2="218" stroke="#2d3748" stroke-width="1" marker-end="url(#a5)"/>
+      <line x1="575" y1="180" x2="480" y2="218" stroke="#2d3748" stroke-width="1" marker-end="url(#a5)"/>
+
+      <!-- Threshold calibration -->
+      <rect x="160" y="218" width="440" height="54" rx="8" fill="rgba(245,158,11,0.08)" stroke="rgba(245,158,11,0.3)" stroke-width="1"/>
+      <text x="380" y="238" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#f59e0b">THRESHOLD CALIBRATION TỪ ROC CURVE</text>
+      <text x="380" y="258" text-anchor="middle" font-family="DM Sans" font-size="12" fill="#c8ccd8">Không dùng default 0.5 — kéo xuống ~0.35 để Sensitivity ≥ 0.80</text>
+      <text x="380" y="272" text-anchor="middle" font-family="DM Sans" font-size="10" fill="#7a8499">Đây là quyết định lâm sàng, không phải kỹ thuật — phải nói rõ trước hội đồng</text>
+    </svg>
+  </div>
+
+  <div class="why-box" style="border-left-color: var(--danger);">
+    <div class="why-label" style="color:var(--danger);">Cơ chế bảo vệ khẩn cấp: Extreme RAO Override Rules</div>
+    <p>Thuật toán RandomForest truyền thống có biên độ trễ với các ca đột quy cực đoan. Vì thế hệ thống thiết lập sẵn cơ chế Threshold Override: <strong>Ngay khi AVR dưới 0.3</strong> HOẶC tổ hợp "động mạch teo khô" (CRAE &lt; 2.0 &amp; CRVE &gt; 3.0), bypass Model ML và trực tiếp ép điểm rủi ro lên <strong>88% (NGUY CƠ CAO)</strong>. Đây là chốt chặn quan trọng "Bắt nhầm còn hơn bỏ sót" của y tế cấp cứu.</p>
+  </div>
+</div>
+
+<hr class="divider"/>
+
+<!-- ══════════════════════════════════════
+     DEMO UI
+═══════════════════════════════════════ -->
+<div class="section">
+  <div class="section-label">Màn hình kết quả</div>
+  <div class="section-title">Giao diện demo hệ thống</div>
+  <div class="section-desc">Hình dung output cuối cùng: ảnh fundus với overlay dấu hiệu bệnh lý, các chỉ số đo lường, và kết luận nguy cơ.</div>
+
+  <div class="demo-shell">
+    <!-- Topbar -->
+    <div class="demo-topbar">
+      <div class="demo-dot" style="background:#ef4444;"></div>
+      <div class="demo-dot" style="background:#f59e0b;"></div>
+      <div class="demo-dot" style="background:#22c55e;"></div>
+      <div class="demo-title-bar">RAO Detection System — v1.0 · FSB MSA</div>
+    </div>
+
+    <div class="demo-body">
+      <!-- Left: fundus image + overlay -->
+      <div class="demo-left">
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:0.08em;text-transform:uppercase;">Ảnh fundus + overlay phân tích</div>
+        <div class="demo-img-area">
+          <!-- Simulated fundus with overlays -->
+          <svg width="100%" viewBox="0 0 420 320" xmlns="http://www.w3.org/2000/svg">
+            <!-- Eye background -->
+            <circle cx="210" cy="160" r="150" fill="#1a0c08"/>
+            <circle cx="210" cy="160" r="148" fill="none" stroke="#2d1a12" stroke-width="2"/>
+            <!-- Retinal texture -->
+            <circle cx="210" cy="160" r="148" fill="url(#retina_bg)" opacity="0.3"/>
+            <!-- OD -->
+            <circle cx="210" cy="160" r="22" fill="#b8860b" opacity="0.7"/>
+            <circle cx="210" cy="160" r="22" fill="none" stroke="#f59e0b" stroke-width="1.5"/>
+            <text x="210" y="165" text-anchor="middle" font-family="IBM Plex Mono" font-size="8" fill="#f59e0b">OD</text>
+            <!-- Zone B -->
+            <circle cx="210" cy="160" r="32" fill="none" stroke="#22c55e" stroke-width="1" stroke-dasharray="4 3" opacity="0.5"/>
+            <circle cx="210" cy="160" r="65" fill="rgba(34,197,94,0.06)" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="5 4"/>
+            <text x="275" y="110" font-family="IBM Plex Mono" font-size="8" fill="#22c55e">Zone B</text>
+
+            <!-- Arteries (red, thin) -->
+            <path d="M210 160 Q185 135 160 115" fill="none" stroke="#ef4444" stroke-width="2.5"/>
+            <path d="M210 160 Q235 130 260 108" fill="none" stroke="#ef4444" stroke-width="2.5"/>
+            <path d="M210 160 Q180 178 150 195" fill="none" stroke="#ef4444" stroke-width="2"/>
+            <path d="M210 160 Q240 180 268 200" fill="none" stroke="#ef4444" stroke-width="2"/>
+            <!-- Veins (blue, thick) -->
+            <path d="M210 160 Q188 140 165 120" fill="none" stroke="#3b82f6" stroke-width="4.5"/>
+            <path d="M210 160 Q232 135 255 112" fill="none" stroke="#3b82f6" stroke-width="4.5"/>
+            <path d="M210 160 Q182 175 155 190" fill="none" stroke="#3b82f6" stroke-width="3.5"/>
+            <path d="M210 160 Q238 175 262 192" fill="none" stroke="#3b82f6" stroke-width="3.5"/>
+
+            <!-- GAP / broken vessel highlight -->
+            <circle cx="168" cy="118" r="12" fill="rgba(245,158,11,0.15)" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="3 2"/>
+            <text x="154" y="106" font-family="IBM Plex Mono" font-size="7" fill="#f59e0b">gap</text>
+
+            <!-- Retinal whitening blob -->
+            <ellipse cx="260" cy="200" rx="18" ry="14" fill="rgba(239,68,68,0.2)" stroke="#ef4444" stroke-width="1" stroke-dasharray="2 2"/>
+            <text x="284" y="198" font-family="IBM Plex Mono" font-size="7" fill="#ef4444">whitening</text>
+
+            <!-- Tortuosity highlight on a vessel -->
+            <path d="M150 195 Q140 210 132 220 Q126 228 120 238" fill="none" stroke="#a78bfa" stroke-width="2" stroke-dasharray="4 2"/>
+            <text x="104" y="250" font-family="IBM Plex Mono" font-size="7" fill="#a78bfa">tortuosity</text>
+
+            <!-- Legend bottom left -->
+            <rect x="20" y="278" width="260" height="34" rx="4" fill="rgba(0,0,0,0.5)"/>
+            <circle cx="36" cy="295" r="4" fill="#ef4444"/>
+            <text x="46" y="299" font-family="DM Sans" font-size="9" fill="#e8eaf0">Artery</text>
+            <circle cx="86" cy="295" r="4" fill="#3b82f6"/>
+            <text x="96" y="299" font-family="DM Sans" font-size="9" fill="#e8eaf0">Vein</text>
+            <rect x="126" y="291" width="8" height="8" rx="1" fill="rgba(245,158,11,0.5)" stroke="#f59e0b" stroke-width="0.5"/>
+            <text x="140" y="299" font-family="DM Sans" font-size="9" fill="#e8eaf0">Gap</text>
+            <rect x="174" y="291" width="8" height="8" rx="1" fill="rgba(239,68,68,0.2)" stroke="#ef4444" stroke-width="0.5"/>
+            <text x="188" y="299" font-family="DM Sans" font-size="9" fill="#e8eaf0">Whitening</text>
+          </svg>
+        </div>
+
+        <!-- Layer toggles -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <div style="background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.3);border-radius:4px;padding:3px 10px;font-size:11px;font-family:'IBM Plex Mono',monospace;color:#22c55e;">Zone B</div>
+          <div style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:4px;padding:3px 10px;font-size:11px;font-family:'IBM Plex Mono',monospace;color:#ef4444;">Artery</div>
+          <div style="background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.3);border-radius:4px;padding:3px 10px;font-size:11px;font-family:'IBM Plex Mono',monospace;color:#3b82f6;">Vein</div>
+          <div style="background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);border-radius:4px;padding:3px 10px;font-size:11px;font-family:'IBM Plex Mono',monospace;color:#f59e0b;">Gap</div>
+          <div style="background:rgba(167,139,250,0.1);border:1px solid rgba(167,139,250,0.3);border-radius:4px;padding:3px 10px;font-size:11px;font-family:'IBM Plex Mono',monospace;color:#a78bfa;">Tort</div>
+        </div>
+      </div>
+
+      <!-- Right: metrics + verdict -->
+      <div class="demo-right">
+        <div>
+          <div class="demo-panel-title">Chỉ số giải phẫu học</div>
+          <div class="metric-row">
+            <span class="metric-name">AVR (Zone B)</span>
+            <span class="metric-val" style="color:#ef4444;">0.44</span>
+          </div>
+          <div class="metric-bar-wrap">
+            <div class="metric-bar-bg"><div class="metric-bar-fill" style="width:44%;background:#ef4444;"></div></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:-6px;margin-bottom:8px;">
+            <span>0</span><span style="color:#22c55e;">≥0.66 normal</span><span>1</span>
+          </div>
+
+          <div class="metric-row">
+            <span class="metric-name">CRAE</span>
+            <span class="metric-val" style="color:#f59e0b;">89.2 μm</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-name">CRVE</span>
+            <span class="metric-val" style="color:#c8ccd8;">201.4 μm</span>
+          </div>
+        </div>
+
+        <div>
+          <div class="demo-panel-title">Dấu hiệu hình thái</div>
+          <div class="metric-row">
+            <span class="metric-name">Tortuosity mean</span>
+            <span class="metric-val" style="color:#ef4444;">1.72</span>
+          </div>
+          <div class="metric-bar-wrap">
+            <div class="metric-bar-bg"><div class="metric-bar-fill" style="width:72%;background:#ef4444;"></div></div>
+          </div>
+
+          <div class="metric-row">
+            <span class="metric-name">Std tortuosity</span>
+            <span class="metric-val" style="color:#f59e0b;">0.38</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-name">Fractal dim.</span>
+            <span class="metric-val" style="color:#f59e0b;">1.41</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-name">Vessel density</span>
+            <span class="metric-val" style="color:#f59e0b;">0.061</span>
+          </div>
+        </div>
+
+        <div>
+          <div class="demo-panel-title">Tính toàn vẹn mạch</div>
+          <div class="metric-row">
+            <span class="metric-name">Discontinuity score</span>
+            <span class="metric-val" style="color:#ef4444;">0.228</span>
+          </div>
+          <div class="metric-bar-wrap">
+            <div class="metric-bar-bg"><div class="metric-bar-fill" style="width:68%;background:#ef4444;"></div></div>
+          </div>
+
+          <div class="metric-row">
+            <span class="metric-name">Broken vessel pairs</span>
+            <span class="metric-val" style="color:#ef4444;">3</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-name">Whitening score</span>
+            <span class="metric-val" style="color:#f59e0b;">0.041</span>
+          </div>
+        </div>
+
+        <!-- Verdict -->
+        <div class="verdict-box">
+          <div class="verdict-label">Xác suất RAO (Quy luật Override)</div>
+          <div class="verdict-pct">92%</div>
+          <div style="margin-bottom:8px;">
+            <span class="verdict-tag">DANGER / RAO EXTREME</span>
+          </div>
+          <div style="font-size:11px;color:var(--muted);line-height:1.5;">
+            MATCH RULE: AVR &lt; 0.3<br>
+            → BYPASS ML! Can thiệp chuyên khoa khẩn
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="why-box" style="border-left-color: var(--accent2);">
+    <div class="why-label" style="color:var(--accent2);">Về màn hình demo</div>
+    <p>Ảnh fundus overlay hiển thị: <strong>Zone B</strong> (vòng xanh lá — vùng đo chuẩn Knudtson), <strong>artery</strong> đỏ / <strong>vein</strong> xanh (A/V classifier), <strong>gap</strong> vàng cam (discontinuity), <strong>tortuosity</strong> tím (đoạn mạch xoắn bất thường), <strong>whitening</strong> đỏ nhạt (phù võng mạc). Panel phải: 8 chỉ số lâm sàng với bar chart và ngưỡng tham chiếu, kết luận probability score.</p>
+  </div>
+</div>
+
+<hr class="divider"/>
+
+<!-- ══════════════════════════════════════
+     SUMMARY TABLE
+═══════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">Tóm tắt — Tại sao mỗi bước tồn tại</div>
+  <div style="overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:13px;">
+      <thead>
+        <tr style="border-bottom:1px solid var(--border2);">
+          <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:400;font-family:'IBM Plex Mono',monospace;font-size:10px;">Bước</th>
+          <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:400;font-family:'IBM Plex Mono',monospace;font-size:10px;">Thuật toán</th>
+          <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:400;font-family:'IBM Plex Mono',monospace;font-size:10px;">Câu hỏi lâm sàng trả lời</th>
+          <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:400;font-family:'IBM Plex Mono',monospace;font-size:10px;">Nếu thiếu</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 12px;color:#2dd4bf;font-family:'IBM Plex Mono',monospace;font-size:11px;">FOV Mask</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">Otsu + closing</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">Bỏ vùng không có thông tin</td>
+          <td style="padding:10px 12px;color:#7a8499;">CLAHE bị méo histogram</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 12px;color:#2dd4bf;font-family:'IBM Plex Mono',monospace;font-size:11px;">Green + CLAHE</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">Channel split + CLAHE</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">Tối đa contrast mạch máu</td>
+          <td style="padding:10px 12px;color:#7a8499;">Mạch mờ bị miss</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 12px;color:#4a9eff;font-family:'IBM Plex Mono',monospace;font-size:11px;">Frangi filter</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">Hessian eigenvalue</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">Đây có phải cấu trúc ống không?</td>
+          <td style="padding:10px 12px;color:#7a8499;">Noise và artifact vào skeleton</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 12px;color:#4a9eff;font-family:'IBM Plex Mono',monospace;font-size:11px;">Skeletonization</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">Zhang-Suen thinning</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">Topology mạng mạch là gì?</td>
+          <td style="padding:10px 12px;color:#7a8499;">Không đo được từng đoạn mạch</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 12px;color:#f59e0b;font-family:'IBM Plex Mono',monospace;font-size:11px;">OD Detection</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">GaussianBlur + minMaxLoc</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">Gốc mạch máu ở đâu?</td>
+          <td style="padding:10px 12px;color:#7a8499;">AVR không so sánh được giữa người</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 12px;color:#f59e0b;font-family:'IBM Plex Mono',monospace;font-size:11px;">Zone B</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">Annular mask (Knudtson)</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">Đo ở vùng nào chuẩn lâm sàng?</td>
+          <td style="padding:10px 12px;color:#7a8499;">AVR mất ý nghĩa thống kê</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 12px;color:#f59e0b;font-family:'IBM Plex Mono',monospace;font-size:11px;">A/V Classification</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">SVM(rbf) + graph prop.</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">Đây là artery hay vein?</td>
+          <td style="padding:10px 12px;color:#7a8499;">AVR sai, CRAE/CRVE vô nghĩa</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 12px;color:#a78bfa;font-family:'IBM Plex Mono',monospace;font-size:11px;">AVR / CRAE / CRVE</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">Cross-section measurement</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">Mạch có bị hẹp không?</td>
+          <td style="padding:10px 12px;color:#7a8499;">Thiếu dấu hiệu hẹp mạch (quan trọng nhất)</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 12px;color:#a78bfa;font-family:'IBM Plex Mono',monospace;font-size:11px;">Tortuosity</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">arc/chord per skan edge</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">Mạch có xoắn bất thường không?</td>
+          <td style="padding:10px 12px;color:#7a8499;">Thiếu dấu hiệu tăng huyết áp</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 12px;color:#a78bfa;font-family:'IBM Plex Mono',monospace;font-size:11px;">Discontinuity</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">closing − skeleton (weighted)</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">Mạch có bị đứt đoạn không?</td>
+          <td style="padding:10px 12px;color:#7a8499;">Thiếu dấu hiệu tắc nghẽn trực tiếp</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 12px;color:#a78bfa;font-family:'IBM Plex Mono',monospace;font-size:11px;">Endpoint analysis</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">1-neighbor + tangent vector</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">Gap nào có cấu trúc mạch thật?</td>
+          <td style="padding:10px 12px;color:#7a8499;">Chỉ bắt gap ngắn, bỏ sót gap lớn</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 12px;color:#a78bfa;font-family:'IBM Plex Mono',monospace;font-size:11px;">Retinal whitening</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">Blob detection ngoài mask</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">Có phù võng mạc không?</td>
+          <td style="padding:10px 12px;color:#7a8499;">Thiếu dấu hiệu CRAO cấp tính</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 12px;color:#4a9eff;font-family:'IBM Plex Mono',monospace;font-size:11px;">Hysteresis Threshold</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">Ngưỡng kép (High 88% / Low 72%)</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">Mạch giảm màu có bị đứt gãy ảo không?</td>
+          <td style="padding:10px 12px;color:#7a8499;">Mạch bị đứt gãy, sai hình học</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 12px;color:#22c55e;font-family:'IBM Plex Mono',monospace;font-size:11px;">RF &amp; Override Rules</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">RandomForest + Quy tắc chèn khẩn cấp</td>
+          <td style="padding:10px 12px;color:#c8ccd8;">Đánh giá tổng hợp rủi ro đột quỵ/RAO</td>
+          <td style="padding:10px 12px;color:#7a8499;">Bỏ lọt ca bệnh khi model do dự</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div style="text-align:center;padding:40px 0 20px;color:var(--muted);font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.1em;">
+  MSA FSB · Xử lý ảnh & Video · RAO Detection Pipeline Documentation
+</div>
+
+</div>
+</body>
+</html>

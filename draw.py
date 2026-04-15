@@ -36,49 +36,7 @@ def _make_colorbar(height, width=28, min_val=0.0, max_val=1.0,
     return bar
 
 
-# ── Internal helpers ───────────────────────────────────────────────────────────
-
-def _compute_discontinuity_map(skeleton_bin, vessel_mask):
-    """Gap map = closing(skeleton) - skeleton, lọc noise."""
-    if skeleton_bin is None:
-        return np.zeros_like(vessel_mask, dtype=np.uint8), 0.0
-
-    sk = (skeleton_bin > 0).astype(np.uint8)
-    if sk.sum() == 0:
-        return np.zeros_like(vessel_mask, dtype=np.uint8), 0.0
-
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    sk_u8 = (sk * 255).astype(np.uint8)
-
-    closed = cv2.morphologyEx(sk_u8, cv2.MORPH_CLOSE, kernel, iterations=2)
-    near_vessel = cv2.dilate((vessel_mask > 0).astype(np.uint8) * 255,
-                             cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)),
-                             iterations=1)
-    gap_raw = ((closed > 0) & (sk_u8 == 0) & (near_vessel > 0)).astype(np.uint8) * 255
-
-    endpoint = _compute_endpoint_map(sk_u8, np.ones_like(sk_u8, dtype=np.uint8) * 255)
-    endpoint_near = cv2.dilate(endpoint, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (19, 19)), iterations=1)
-    gap = cv2.bitwise_and(gap_raw, endpoint_near)
-
-    n_lbl, lbl, stats, _ = cv2.connectedComponentsWithStats(gap, connectivity=8)
-    filtered = np.zeros_like(gap)
-    for i in range(1, n_lbl):
-        if stats[i, cv2.CC_STAT_AREA] >= 3:
-            filtered[lbl == i] = 255
-    gap = filtered
-
-    score = float(np.count_nonzero(gap)) / max(1.0, float(np.count_nonzero(sk_u8 > 0)))
-    return gap, score
-
-
-def _compute_endpoint_map(skeleton_bin, fov_mask):
-    if skeleton_bin is None:
-        return np.zeros_like(fov_mask, dtype=np.uint8)
-    sk = (skeleton_bin > 0).astype(np.uint8)
-    k = np.ones((3, 3), dtype=np.uint8)
-    neigh_count = cv2.filter2D(sk, ddepth=cv2.CV_16U, kernel=k, borderType=cv2.BORDER_CONSTANT)
-    out = (((sk == 1) & (neigh_count == 2) & (fov_mask > 0)).astype(np.uint8) * 255)
-    return out
+import feature_extract
 
 
 def _cross_section_diameter(binary_mask, y, x, angle_rad, half_width=15):
@@ -339,38 +297,23 @@ def draw_discontinuity_map(skeleton, vessel_mask, fov_mask):
     sk_disp = cv2.dilate(sk_u8, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2)), iterations=1)
     vis[sk_disp > 0] = (0, 230, 60)
 
-    # 3. Morphological closing để tìm gap
-    kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-    closed = cv2.morphologyEx(sk_u8, cv2.MORPH_CLOSE, kernel_close, iterations=3)
+    # 3. Sử dụng Gap Map thống nhất từ tầng trích xuất
+    gap_filtered, _ = feature_extract.get_discontinuity_map(skeleton, vessel_mask, fov_mask)
+    if np.count_nonzero(gap_filtered) == 0:
+        return vis
 
-    near_vessel = cv2.dilate(
-        (vessel_mask > 0).astype(np.uint8) * 255,
-        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)), iterations=1
-    )
-    gap_raw = ((closed > 0) & (sk_u8 == 0) & (near_vessel > 0)).astype(np.uint8) * 255
+    # 4. Tô màu gap
+    vis[gap_filtered > 0] = (50, 80, 255)
 
-    # 4. Chỉ giữ gap gần endpoint
-    endpoint = _compute_endpoint_map(sk_u8, np.ones_like(sk_u8) * 255)
-    endpoint_near = cv2.dilate(endpoint,
-                               cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 25)), iterations=1)
-    gap = cv2.bitwise_and(gap_raw, endpoint_near)
-
-    # 5. Lọc blob nhỏ (noise) — siết chặt hơn
-    n_lbl, lbl_img, stats_cc, centroids = cv2.connectedComponentsWithStats(gap, connectivity=8)
-    gap_filtered = np.zeros_like(gap)
+    n_lbl, lbl_img, stats_cc, centroids = cv2.connectedComponentsWithStats(gap_filtered, connectivity=8)
     gap_centers = []
     for i in range(1, n_lbl):
         area = stats_cc[i, cv2.CC_STAT_AREA]
-        if area >= 18:  # Tăng từ 4 → 18 để lọc noise tốt hơn
-            gap_filtered[lbl_img == i] = 255
-            cx_g = int(centroids[i][0])
-            cy_g = int(centroids[i][1])
-            gap_centers.append((cx_g, cy_g, area))
+        cx_g = int(centroids[i][0])
+        cy_g = int(centroids[i][1])
+        gap_centers.append((cx_g, cy_g, area))
 
-    # 6. Tô màu gap
-    vis[gap_filtered > 0] = (50, 80, 255)
-
-    # 7. Chỉ khoanh vòng tròn TOP-20 gap lớn nhất (tránh nhiễu)
+    # 5. Chỉ khoanh vòng tròn TOP-20 gap lớn nhất (tránh nhiễu)
     gap_centers.sort(key=lambda x: -x[2])
     for (gx, gy, area) in gap_centers[:20]:
         r = max(10, min(22, int(np.sqrt(area) * 1.8)))
@@ -378,10 +321,11 @@ def draw_discontinuity_map(skeleton, vessel_mask, fov_mask):
         cv2.circle(vis, (gx, gy), r, (0, 60, 220), 1, cv2.LINE_AA)
         cv2.circle(vis, (gx, gy), 3, (0, 200, 255), -1)
 
-    # 8. Đánh dấu endpoint (đầu mút skeleton) — giới hạn số lượng
+    # 6. Đánh dấu endpoint (khớp theo hàm mới)
+    endpoint = feature_extract._compute_endpoint_map(skeleton, fov_mask)
     ep_coords = np.where(endpoint > 0)
     ep_list = list(zip(ep_coords[0], ep_coords[1]))
-    # Chỉ hiển thị endpoint nằm gần gap (tránh nhiều chấm thừa)
+    # Chỉ hiển thị endpoint nằm gần gap
     gap_dilated = cv2.dilate(gap_filtered,
                              cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)), iterations=1)
     for ey, ex in ep_list[:200]:
@@ -402,52 +346,53 @@ def draw_discontinuity_map(skeleton, vessel_mask, fov_mask):
 
 def draw_vessel_segmentation(vessel_mask, en_green=None, fov_mask=None):
     """
-    Panel 3 (B&W): Ảnh phân đoạn mạch máu cực rõ ràng.
-    - Xóa nhiễu nhỏ (CC filter)
-    - Đóng kín các khe hở nhỏ (morphological close)
-    - Làm dày nhẹ để dễ quan sát
-    - White vessels trên black background
+    Panel 3 (B&W): Ảnh phân đoạn mạch máu với độ rộng CHÍNH XÁC.
+
+    LƯU Ý: vessel_mask từ riched_image đã qua morphological close rồi.
+    Hàm này KHÔNG close/dilate thêm để tránh làm phồng mạch.
+    Chỉ: CC filter (bỏ noise) + erosion nhẹ (trả về độ mảnh thực tế).
     """
     if vessel_mask is None:
         return np.zeros((512, 512), dtype=np.uint8)
 
     h, w = vessel_mask.shape
 
-    # ── 1. Binary base ──────────────────────────────────────────────────────
+    # ── 1. Binary base (giữ nguyên, không close thêm) ───────────────────────
     binary = (vessel_mask > 0).astype(np.uint8) * 255
 
-    # ── 2. Close nhỏ để nối các đoạn đứt mảnh ──────────────────────────────
-    k3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, k3, iterations=2)
-
-    # ── 3. CC filter: bỏ ~noise nhỏ ────────────────────────────────────────
+    # ── 2. CC filter: bỏ noise nhỏ, giữ mạch thực ──────────────────────────
     fov_px = float(np.count_nonzero(fov_mask)) if fov_mask is not None else float(h * w)
-    min_area = max(60, int(fov_px * 0.00007))
-    n_lbl, lbl_img, stats_cc, _ = cv2.connectedComponentsWithStats(closed, connectivity=8)
-    filtered = np.zeros_like(closed)
+    min_area = max(50, int(fov_px * 0.00006))
+    n_lbl, lbl_img, stats_cc, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
+    filtered = np.zeros_like(binary)
     for i in range(1, n_lbl):
         if stats_cc[i, cv2.CC_STAT_AREA] >= min_area:
             filtered[lbl_img == i] = 255
 
-    # ── 4. Dày nhẹ để dễ nhìn trên màn hình nhỏ ─────────────────────────────
-    k2 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
-    thickened = cv2.dilate(filtered, k2, iterations=1)
+    # ── 3. Erosion nhẹ 1px để bù lại phần đã dày từ upstream close ──────────
+    # riched_image dùng MORPH_CLOSE k3 iter=2 → mạch có thể rộng hơn ~1-2px
+    k_erode = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+    thinned = cv2.erode(filtered, k_erode, iterations=1)
 
-    # ── 5. Nếu có en_green: blend thêm đường gradient để tăng độ rõ ─────────
+    # ── 4. Đảm bảo không mất mạch mảnh do erode quá ─────────────────────────
+    # Nếu erode làm mất >40% pixel → bỏ erode, dùng lại filtered
+    if np.count_nonzero(thinned) < 0.60 * np.count_nonzero(filtered):
+        thinned = filtered
+
+    # ── 5. Tăng tương phản cạnh mạch qua CLAHE (KHÔNG thay đổi độ dày) ──────
     if en_green is not None:
-        # Làm nổi bật mạch từ green channel bằng cách overlay lên mask
         g_norm = cv2.normalize(en_green, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-        # CLAHE local contrast
-        clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8))
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
         g_eq = clahe.apply(g_norm)
-        # Chỉ giữ phần nằm trong vessel mask
+        # Chỉ lấy cường độ trong vùng mask — KHÔNG dùng để phình to
         vessel_intensity = cv2.bitwise_and(g_eq, g_eq,
-                                           mask=(thickened > 0).astype(np.uint8))
-        # Blend: 60% intensity + 40% pure binary
-        blend = cv2.addWeighted(vessel_intensity, 0.5, thickened, 0.8, 0)
-        _, final = cv2.threshold(blend, 40, 255, cv2.THRESH_BINARY)
+                                           mask=(thinned > 0).astype(np.uint8))
+        # Blend nhẹ: 70% binary (giữ hình dạng) + 30% intensity (tăng cạnh)
+        blend = cv2.addWeighted(thinned.astype(np.float32), 0.70,
+                                vessel_intensity.astype(np.float32), 0.30, 0)
+        _, final = cv2.threshold(blend.astype(np.uint8), 30, 255, cv2.THRESH_BINARY)
     else:
-        final = thickened
+        final = thinned
 
     if fov_mask is not None:
         final = cv2.bitwise_and(final, fov_mask)
@@ -510,20 +455,21 @@ def draw_diameter_heatmap(skeleton_bin, vessel_mask, en_green,
         diam = seg["diam"]
         is_artery = seg["is_artery"]
 
+        # Issue 5: Narrow/Swollen absolute threshold vs V_mean
         if is_artery:
-            ref_mean, ref_std = avg_a, std_a
-            # HẸP: < mean - 1.5*std; PHỒNG: > mean + 1.5*std
-            is_narrow = diam < (ref_mean - 1.5 * ref_std) and diam < avg_v * THRESHOLD_NARROW_LOCAL
-            is_wide = diam > (ref_mean + 2.0 * ref_std)
+            # HẸP ĐỘNG MẠCH: nhỏ hơn ngưỡng trung bình vein * THRESHOLD_NARROW_LOCAL (0.5)
+            is_narrow = diam < (avg_v * THRESHOLD_NARROW_LOCAL)
+            # PHỒNG ĐỘNG MẠCH: Lớn gấp rưỡi artery trung bình
+            is_wide = diam > (avg_a * 1.5)
         else:
-            ref_mean, ref_std = avg_v, std_v
-            is_narrow = diam < (ref_mean - 1.8 * ref_std)
-            is_wide = diam > (ref_mean + 2.0 * ref_std)
+            # Tĩnh mạch không hẹp theo dạng này, chỉ xét PHỒNG
+            is_narrow = False
+            is_wide = diam > (avg_v * 1.5)
 
         # Normalize diameter cho màu: 0=hẹp nhất (xanh), 1=rộng nhất (đỏ)
-        all_ref = ref_mean
-        spread = max(ref_std * 3, 2.0)
-        norm_d = np.clip((diam - (all_ref - spread)) / (2 * spread), 0.0, 1.0)
+        ref_mean = avg_a if is_artery else avg_v
+        spread = max(ref_mean * 0.5, 2.0)
+        norm_d = np.clip((diam - (ref_mean - spread)) / (2 * spread), 0.0, 1.0)
         color = _apply_colormap_jet(float(norm_d))
 
         # Vẽ từng segment
@@ -618,7 +564,7 @@ def draw_feature_map(img_disp, vessel_mask, en_green, regions,
         return result_img
 
     brightness_threshold = np.median(vessel_pixels)
-    gap_map, discontinuity_score = _compute_discontinuity_map(skeleton, vessel_mask)
+    gap_map, discontinuity_score = feature_extract.get_discontinuity_map(skeleton, vessel_mask, fov_mask)
 
     if _SKAN_AVAILABLE and skeleton is not None:
         segments = _build_skeleton_segments(

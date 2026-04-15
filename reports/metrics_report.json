@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-14T02:14:58.200375",
+  "generated_at": "2026-04-15T11:53:39.495258",
   "dataset": {
     "path": "dataset",
     "total_samples": 455,
@@ -7,40 +7,40 @@
     "label_1_high_risk": 99
   },
   "cross_validation_5fold": {
-    "accuracy_mean": 0.9253,
-    "accuracy_std": 0.0322,
-    "f1_mean": 0.8091,
-    "f1_std": 0.0885,
-    "auc_roc_mean": 0.9435,
-    "auc_roc_std": 0.0278
+    "accuracy_mean": 0.844,
+    "accuracy_std": 0.0364,
+    "f1_mean": 0.6325,
+    "f1_std": 0.0796,
+    "auc_roc_mean": 0.8837,
+    "auc_roc_std": 0.018
   },
   "holdout_80_20": {
-    "accuracy": 0.9231,
-    "f1_score": 0.8,
-    "auc_roc": 0.9162,
-    "sensitivity_recall": 0.7,
-    "specificity": 0.9859,
+    "accuracy": 0.8242,
+    "f1_score": 0.6,
+    "auc_roc": 0.8993,
+    "sensitivity_recall": 0.6,
+    "specificity": 0.8873,
     "confusion_matrix": [
       [
-        70,
-        1
+        63,
+        8
       ],
       [
-        6,
-        14
+        8,
+        12
       ]
     ]
   },
   "feature_importances": {
-    "AVR": 0.0632,
-    "CRAE": 0.0407,
-    "CRVE": 0.047,
-    "Tortuosity": 0.0461,
-    "StdTortuosity": 0.039,
-    "VesselDensity": 0.0618,
-    "FractalDim": 0.0835,
-    "Discontinuity": 0.0702,
-    "EndpointGapScore": 0.0435,
-    "WhiteningScore": 0.5049
+    "AVR": 0.1547,
+    "CRAE": 0.0487,
+    "CRVE": 0.1299,
+    "Tortuosity": 0.06,
+    "StdTortuosity": 0.0463,
+    "VesselDensity": 0.0557,
+    "FractalDim": 0.1318,
+    "Discontinuity": 0.0484,
+    "EndpointGapScore": 0.0353,
+    "WhiteningScore": 0.2893
   }
 }

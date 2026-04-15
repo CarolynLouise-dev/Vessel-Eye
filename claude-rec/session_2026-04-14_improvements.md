@@ -103,9 +103,25 @@ Dialog phóng to toàn màn hình:
 
 ## Ghi chú lâm sàng (để phát triển tiếp)
 
+### ✨ Cập nhật bổ sung (Fixes sau review)
+Sau khi review các lỗi "Mạch bị phồng to", "Kết luận ML sai lệch với RAO", và "Thuật toán Hysteresis Thresholding":
+
+1. **Fix Hysteresis Thresholding (`riched_image.py`)**: 
+   - Thay thế `_adaptive_vessel_threshold` bằng `_hysteresis_vessel_threshold`.
+   - Dùng High threshold (percentile 88) làm hạt giống và Low threshold (percentile 72) để kết nối. Giúp các đoạn mạch thưa thớt ở bệnh RAO không bị đứt gãy.
+2. **Fix Nhận diện cực đoan RAO (`main.py`)**:
+   - Bổ sung override cứng bỏ qua model ML nếu phát hiện RAO/CRVO cực đoan:
+      - AV Ratio cực thấp (< 0.3)
+      - Tổ hợp (CRAE < 2.0 và CRVE > 3.0) -> Động mạch biến mất.
+      - Fractal cực thấp (< 1.20) và hẹp lan tỏa.
+   - Khi phát hiện, ép phần trăm rủi ro lên tối thiểu 88% (NGUY CƠ CAO) và hiển thị cảnh báo đỏ trên bảng metrics.
+3. **Fix Vessel Thickness (`draw.py`)**:
+   - Sửa Panel 3 "Phân đoạn mạch máu B&W". Mạch máu từng bị nở do double-processing (morphological close kép).
+   - Xóa bỏ close & dilate dư thừa khỏi `draw_vessel_segmentation` và áp dụng erosion nhẹ (1px) để trả độ sắc nét nguyên bản cho mạch.
+
 ### Điểm cần cải thiện thêm
 
-- [ ] **RAO detection**: Với ảnh RAO (Retinal Artery Occlusion), mạch máu thưa thớt (sparse). Ngưỡng `DENSITY_THRESHOLD = 0.05` có thể cần hạ thấp hơn, hoặc thêm detection riêng cho RAO pattern (mạch tập trung vào vùng trung tâm, thiếu vùng ngoại vi).
+- [x] **RAO detection**: Đã thêm override rule bảo vệ.
 - [ ] **False positive discontinuity**: Panel đứt đoạn vẫn tạo ra nhiều vòng tròn kể cả sau khi siết. Cân nhắc thêm bộ lọc dựa trên skeleton length thay vì gap area.
 - [ ] **Vessel width calibration**: CRAE/CRVE hiện đo bằng pixel cross-section. Nên chuẩn hóa theo FOV size để có giá trị tuyệt đối (μm).
 - [ ] **OD detection accuracy**: Một số ảnh OD bị xác định sai vị trí. Xem xét dùng bright blob + vascular convergence kết hợp.
@@ -125,9 +141,9 @@ THRESHOLD_NARROW_LOCAL = 0.50   # diam_artery / mean_vein: < 0.5 → hẹp
 
 ```
 Vessel-Eye/
-├── main.py          ← Viết lại hoàn toàn
-├── draw.py          ← Viết lại hoàn toàn  
-└── riched_image.py  ← Cải thiện _build_fov_mask()
+├── main.py          ← Viết lại hoàn toàn + Thêm RAO Rule Override + UI Fixes
+├── draw.py          ← Viết lại hoàn toàn + Sửa Vessel Segment Thickness
+└── riched_image.py  ← Cải thiện _build_fov_mask() + Thêm Hysteresis Thresholding
 ```
 
 ---

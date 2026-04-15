@@ -72,14 +72,78 @@ def _fractal_dimension(mask_bin):
     return float(slope)
 
 
-def _weighted_discontinuity_score(skeleton_bin, en_green, zone_mask=None):
+def _compute_endpoint_map(skeleton_bin, fov_mask=None):
+    if skeleton_bin is None:
+        return np.zeros((512, 512), dtype=np.uint8) if fov_mask is None else np.zeros_like(fov_mask, dtype=np.uint8)
+
+    sk = (skeleton_bin > 0).astype(np.uint8)
+    endpoint_map = np.zeros_like(sk)
+
+    # K1: N direction endpoint (Foreground central + top, background 7 surrounding)
+    k1 = np.array([[-1, 1, -1], [-1, 1, -1], [-1, -1, -1]], dtype=np.int8)
+    # K2: NE direction endpoint (Foreground central + top-right, background 7 surrounding)
+    k2 = np.array([[-1, -1, 1], [-1, 1, -1], [-1, -1, -1]], dtype=np.int8)
+
+    kernels = [np.rot90(k1, i) for i in range(4)] + [np.rot90(k2, i) for i in range(4)]
+
+    for k in kernels:
+        hit = cv2.morphologyEx(sk, cv2.MORPH_HITMISS, k)
+        endpoint_map = cv2.bitwise_or(endpoint_map, hit)
+
+    endpoint_map[[0, -1], :] = 0
+    endpoint_map[:, [0, -1]] = 0
+
+    if fov_mask is not None:
+        endpoint_map &= (fov_mask > 0).astype(np.uint8)
+
+    return endpoint_map * 255
+
+
+def get_discontinuity_map(skeleton_bin, vessel_mask, fov_mask=None):
+    """
+    Chuẩn hóa gap map giữa tầng Trích xuất và Draw.
+    Sử dụng MORPH_CLOSE diện rộng, lọc endpoint và noise.
+    """
+    if skeleton_bin is None or vessel_mask is None:
+        return np.zeros_like(vessel_mask, dtype=np.uint8), 0.0
+
     sk = (skeleton_bin > 0).astype(np.uint8)
     if sk.sum() == 0:
+        return np.zeros_like(vessel_mask, dtype=np.uint8), 0.0
+
+    sk_u8 = sk * 255
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    closed = cv2.morphologyEx(sk_u8, cv2.MORPH_CLOSE, kernel, iterations=3)
+
+    near_vessel = cv2.dilate(
+        (vessel_mask > 0).astype(np.uint8) * 255,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)),
+        iterations=1
+    )
+
+    gap_raw = ((closed > 0) & (sk_u8 == 0) & (near_vessel > 0)).astype(np.uint8) * 255
+
+    endpoint = _compute_endpoint_map(sk_u8, fov_mask)
+    endpoint_near = cv2.dilate(endpoint, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 25)), iterations=1)
+    gap = cv2.bitwise_and(gap_raw, endpoint_near)
+
+    n_lbl, lbl, stats, _ = cv2.connectedComponentsWithStats(gap, connectivity=8)
+    filtered = np.zeros_like(gap)
+    for i in range(1, n_lbl):
+        if stats[i, cv2.CC_STAT_AREA] >= 15:
+            filtered[lbl == i] = 255
+
+    gap_map = filtered
+    score = float(np.count_nonzero(gap_map)) / max(1.0, float(np.count_nonzero(sk_u8 > 0)))
+    return gap_map, score
+
+
+def _weighted_discontinuity_score(skeleton_bin, vessel_mask, en_green, zone_mask=None):
+    gap_map, _ = get_discontinuity_map(skeleton_bin, vessel_mask, zone_mask)
+    if np.count_nonzero(gap_map) == 0:
         return 0.0
 
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    closed = cv2.morphologyEx(sk * 255, cv2.MORPH_CLOSE, kernel, iterations=2)
-    gap = (closed > 0) & (sk == 0)
+    gap = gap_map > 0
     if zone_mask is not None:
         gap &= zone_mask > 0
 
@@ -95,6 +159,7 @@ def _weighted_discontinuity_score(skeleton_bin, en_green, zone_mask=None):
         patch = en_green[y0:y1, x0:x1].astype(np.float32)
         weighted += float(np.std(patch)) / 255.0
 
+    sk = (skeleton_bin > 0).astype(np.uint8)
     if zone_mask is None:
         base = sk
     else:
@@ -104,39 +169,27 @@ def _weighted_discontinuity_score(skeleton_bin, en_green, zone_mask=None):
 
 
 def _endpoint_gap_score(skeleton_bin, zone_mask=None, max_gap_px=40):
-    sk = (skeleton_bin > 0).astype(np.uint8)
-    if np.count_nonzero(sk) < 16:
-        return 0.0
-
-    h, w = sk.shape
-
-    # Vectorized endpoint detection: endpoint has exactly one 8-neighbor.
-    kernel = np.ones((3, 3), dtype=np.uint8)
-    neigh_count_including_self = cv2.filter2D(sk, ddepth=cv2.CV_16U, kernel=kernel, borderType=cv2.BORDER_CONSTANT)
-    endpoint_mask = (sk == 1) & (neigh_count_including_self == 2)
-    endpoint_mask[[0, -1], :] = False
-    endpoint_mask[:, [0, -1]] = False
-    if zone_mask is not None:
-        endpoint_mask &= (zone_mask > 0)
-
-    ys, xs = np.where(endpoint_mask)
+    endpoint_map = _compute_endpoint_map(skeleton_bin, zone_mask)
+    ys, xs = np.where(endpoint_map > 0)
     if len(ys) < 2:
         return 0.0
 
     endpoints = []
+    sk = (skeleton_bin > 0).astype(np.uint8)
     for y, x in zip(ys, xs):
-        # Estimate tangent direction by the local connected neighbor in a 3x3 window.
-        y0, y1 = y - 1, y + 2
-        x0, x1 = x - 1, x + 2
+        y0, y1 = max(0, y - 1), min(sk.shape[0], y + 2)
+        x0, x1 = max(0, x - 1), min(sk.shape[1], x + 2)
         patch = sk[y0:y1, x0:x1].copy()
-        patch[1, 1] = 0
+        
+        c_y, c_x = y - y0, x - x0
+        patch[c_y, c_x] = 0
         nyx = np.argwhere(patch > 0)
         if len(nyx) == 0:
             continue
 
         ny, nx = nyx[0]
-        ty = float(ny - 1)
-        tx = float(nx - 1)
+        ty = float(ny - c_y)
+        tx = float(nx - c_x)
         n = np.hypot(ty, tx)
         if n < 1e-6:
             continue
@@ -157,10 +210,7 @@ def _endpoint_gap_score(skeleton_bin, zone_mask=None, max_gap_px=40):
             if sim > 0.85:
                 pairs += 1
 
-    if zone_mask is None:
-        base = sk
-    else:
-        base = (sk > 0) & (zone_mask > 0)
+    base = sk if zone_mask is None else (sk > 0) & (zone_mask > 0)
     denom = max(1.0, float(np.count_nonzero(base)))
     return float(pairs / denom)
 
@@ -173,7 +223,16 @@ def _whitening_score(en_green, vessel_mask, fov_mask, od_mask=None):
         return 0.0
 
     vals = en_green[valid]
-    thr = np.percentile(vals, 96)
+    if len(vals) == 0:
+        return 0.0
+
+    p98 = np.percentile(vals, 98)
+    val_mean = np.mean(vals)
+    val_std = np.std(vals)
+
+    # Issue 3: Fix Whitening absolute threshold (bounded so normal eyes aren't scored high)
+    thr = max(p98, val_mean + 2.5 * val_std, 180.0)
+
     blobs = np.zeros_like(en_green, dtype=np.uint8)
     blobs[(en_green >= thr) & valid] = 255
 
@@ -317,7 +376,7 @@ def extract_features(binary_mask, en_green, skeleton=None, img_bgr=None, av_mode
     av_ratio = float(crae / max(1e-6, crve))
 
     fractal = _fractal_dimension(((binary_mask > 0) & zone_valid).astype(np.uint8) * 255)
-    discontinuity = _weighted_discontinuity_score(skeleton, en_green, zone_mask=zone_b_mask) if skeleton is not None else 0.0
+    discontinuity = _weighted_discontinuity_score(skeleton, binary_mask, en_green, zone_mask=zone_b_mask) if skeleton is not None else 0.0
     endpoint_gap = _endpoint_gap_score(skeleton, zone_mask=zone_b_mask) if skeleton is not None else 0.0
     whitening = _whitening_score(en_green, binary_mask, fov_mask, od_mask=od_mask)
 

@@ -109,7 +109,7 @@ def train_optimized(dataset_path):
     print("[2/4] 5-fold Stratified Cross-Validation ...")
 
     cv_model = RandomForestClassifier(
-        n_estimators=100, max_depth=12, class_weight="balanced", random_state=42
+        n_estimators=150, max_depth=6, min_samples_leaf=2, class_weight="balanced", random_state=42
     )
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
@@ -129,7 +129,7 @@ def train_optimized(dataset_path):
     )
 
     final_model = RandomForestClassifier(
-        n_estimators=100, max_depth=12, class_weight="balanced", random_state=42
+        n_estimators=150, max_depth=6, min_samples_leaf=2, class_weight="balanced", random_state=42
     )
     final_model.fit(X_train, y_train)
 
@@ -162,7 +162,7 @@ def train_optimized(dataset_path):
     # Step 4: Final model
     print("[4/4] Training final model on full dataset ...")
     full_model = RandomForestClassifier(
-        n_estimators=100, max_depth=12, class_weight="balanced", random_state=42
+        n_estimators=150, max_depth=6, min_samples_leaf=2, class_weight="balanced", random_state=42
     )
     full_model.fit(X, y)
     joblib.dump(full_model, MODEL_PATH)
