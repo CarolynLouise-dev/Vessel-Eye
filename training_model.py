@@ -38,7 +38,8 @@ def _get_vessel_bundle(img, backend="classical", deep_models=None, device="cpu")
     return riched_image.get_enhanced_vessels(img)
 
 
-def _collect_features(dataset_path, av_model=None, backend="classical", deep_models=None, device="cpu"):
+def _collect_features(dataset_path, av_model=None, backend="classical", deep_models=None, device="cpu",
+                       od_models=None, av_ensemble=None):
     X_features, y_labels = [], []
 
     if not os.path.exists(dataset_path):
@@ -73,9 +74,33 @@ def _collect_features(dataset_path, av_model=None, backend="classical", deep_mod
                     deep_models=deep_models,
                     device=device,
                 )
+
+                od_center_override = od_radius_override = None
+                if od_models:
+                    try:
+                        import od_backend
+                        od_center_override, od_radius_override, _, _ = \
+                            od_backend.detect_optic_disc_deep(img, od_models, device)
+                    except Exception:
+                        pass
+
+                artery_mask = vein_mask = None
+                if av_ensemble:
+                    try:
+                        import av_backend
+                        artery_mask, vein_mask = av_backend.segment_av_deep(
+                            img, av_ensemble, device
+                        )
+                    except Exception:
+                        pass
+
                 feats, _ = feature_extract.extract_features(
                     mask, en, skeleton=skeleton,
-                    img_bgr=img, av_model=av_model
+                    img_bgr=img, av_model=av_model,
+                    od_center_override=od_center_override,
+                    od_radius_override=od_radius_override,
+                    artery_mask=artery_mask,
+                    vein_mask=vein_mask,
                 )
                 X_features.append(feats)
                 y_labels.append(int(label))
@@ -92,7 +117,8 @@ def _collect_features(dataset_path, av_model=None, backend="classical", deep_mod
     return X_features, y_labels
 
 
-def train_optimized(dataset_path, backend="classical", deep_n_models=3, device="cpu"):
+def train_optimized(dataset_path, backend="classical", deep_n_models=3, device="cpu",
+                     od_n_models=3, av_n_models=2):
     os.makedirs(MODEL_DIR, exist_ok=True)
     os.makedirs(REPORTS_DIR, exist_ok=True)
 
@@ -105,12 +131,26 @@ def train_optimized(dataset_path, backend="classical", deep_n_models=3, device="
     av_mdl = av_classifier.train_av_classifier(dataset_path)
 
     deep_models = None
+    od_models = None
+    av_ensemble = None
     if backend == "automorph":
         import deep_backend
-        print(f"[0b/4] Loading AutoMorph ensemble ({deep_n_models} model(s)) on {device} ...")
+        print(f"[0b/4] Loading AutoMorph vessel ensemble ({deep_n_models} model(s)) on {device} ...")
         deep_models = deep_backend.load_vessel_seg_ensemble(n_models=deep_n_models, device=device)
         if not deep_models:
-            raise RuntimeError("AutoMorph backend requested but no deep models could be loaded.")
+            raise RuntimeError("AutoMorph backend requested but no vessel models could be loaded.")
+
+        import od_backend as _od_backend
+        print(f"[0c/4] Loading OD wnet ensemble ({od_n_models} model(s)) ...")
+        od_models = _od_backend.load_od_ensemble(n_models=od_n_models, device=device)
+        if not od_models:
+            print("  WARNING: OD models unavailable; Zone B will use heuristic.")
+
+        import av_backend as _av_backend
+        print(f"[0d/4] Loading A/V Generator ensemble ({av_n_models} triplet(s)) ...")
+        av_ensemble = _av_backend.load_av_ensemble(n_models=av_n_models, device=device)
+        if not av_ensemble:
+            print("  WARNING: A/V models unavailable; SVM classifier will be used.")
 
     # Step 1: Feature extraction
     print("[1/4] Extracting features ...")
@@ -120,6 +160,8 @@ def train_optimized(dataset_path, backend="classical", deep_n_models=3, device="
         backend=backend,
         deep_models=deep_models,
         device=device,
+        od_models=od_models,
+        av_ensemble=av_ensemble,
     )
 
     if not X_features:
@@ -263,7 +305,11 @@ if __name__ == "__main__":
     parser.add_argument("--backend", choices=["classical", "automorph"], default="classical",
                         help="Vessel segmentation backend used before feature extraction")
     parser.add_argument("--n_models", type=int, default=3,
-                        help="Number of AutoMorph ensemble models when backend=automorph")
+                        help="Number of AutoMorph vessel ensemble models when backend=automorph")
+    parser.add_argument("--od_n_models", type=int, default=3,
+                        help="Number of OD wnet ensemble models (AutoMorph mode only)")
+    parser.add_argument("--av_n_models", type=int, default=2,
+                        help="Number of A/V Generator ensemble triplets (AutoMorph mode only)")
     parser.add_argument("--device", default="cpu", help="Torch device for AutoMorph backend")
     args = parser.parse_args()
     train_optimized(
@@ -271,4 +317,6 @@ if __name__ == "__main__":
         backend=args.backend,
         deep_n_models=args.n_models,
         device=args.device,
+        od_n_models=args.od_n_models,
+        av_n_models=args.av_n_models,
     )

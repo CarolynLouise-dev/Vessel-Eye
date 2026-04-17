@@ -262,7 +262,8 @@ def _whitening_score(en_green, vessel_mask, fov_mask, od_mask=None):
     return float(np.count_nonzero(blobs) / area)
 
 
-def _skeleton_features(skeleton_bin, binary_mask, en_green, zone_mask=None, img_bgr=None, av_model=None):
+def _skeleton_features(skeleton_bin, binary_mask, en_green, zone_mask=None, img_bgr=None, av_model=None,
+                        artery_mask=None, vein_mask=None):
     torts, a_diams, v_diams = [], [], []
 
     if not _SKAN_AVAILABLE or skeleton_bin is None:
@@ -283,8 +284,15 @@ def _skeleton_features(skeleton_bin, binary_mask, en_green, zone_mask=None, img_
     vessel_pixels = en_green[binary_mask > 0]
     brightness_threshold = np.median(vessel_pixels) if len(vessel_pixels) > 0 else 128
 
+    # Deep A/V pixel masks take priority over SVM classifier
+    _use_deep_av = (
+        artery_mask is not None and vein_mask is not None
+        and artery_mask.shape == binary_mask.shape
+        and vein_mask.shape == binary_mask.shape
+    )
+
     _av_predict = None
-    if av_model is not None and img_bgr is not None:
+    if not _use_deep_av and av_model is not None and img_bgr is not None:
         try:
             from av_classifier import predict_av_segment as _av_predict_fn
             _av_predict = _av_predict_fn
@@ -332,7 +340,18 @@ def _skeleton_features(skeleton_bin, binary_mask, en_green, zone_mask=None, img_
             if diam < 1:
                 continue
 
-            if _av_predict is not None:
+            if _use_deep_av:
+                # Pixel-level lookup from deep A/V segmentation
+                if 0 <= my < artery_mask.shape[0] and 0 <= mx < artery_mask.shape[1]:
+                    if artery_mask[my, mx] > 0:
+                        is_artery = True
+                    elif vein_mask[my, mx] > 0:
+                        is_artery = False
+                    else:
+                        is_artery = float(en_green[my, mx]) > brightness_threshold
+                else:
+                    is_artery = float(en_green[my, mx]) > brightness_threshold
+            elif _av_predict is not None:
                 is_artery = _av_predict(av_model, img_bgr, en_green, binary_mask, path_coords)
             else:
                 avg_int = float(en_green[my, mx])
@@ -348,7 +367,9 @@ def _skeleton_features(skeleton_bin, binary_mask, en_green, zone_mask=None, img_
     return torts, a_diams, v_diams
 
 
-def extract_features(binary_mask, en_green, skeleton=None, img_bgr=None, av_model=None, fov_mask=None, return_details=False):
+def extract_features(binary_mask, en_green, skeleton=None, img_bgr=None, av_model=None, fov_mask=None, return_details=False,
+                     od_center_override=None, od_radius_override=None,
+                     artery_mask=None, vein_mask=None):
     label_img = label(binary_mask)
     regions = regionprops(label_img)
 
@@ -365,11 +386,16 @@ def extract_features(binary_mask, en_green, skeleton=None, img_bgr=None, av_mode
     if img_bgr is None:
         img_bgr = cv2.cvtColor(en_green, cv2.COLOR_GRAY2BGR)
 
-    od_center, od_radius, od_details = anatomy.detect_optic_disc(
-        img_bgr,
-        fov_mask=fov_mask,
-        return_details=True,
-    )
+    if od_center_override is not None and od_radius_override is not None:
+        od_center = od_center_override
+        od_radius = od_radius_override
+        od_details = {"confidence": 1.0, "method": "deep_wnet", "source": "od_backend"}
+    else:
+        od_center, od_radius, od_details = anatomy.detect_optic_disc(
+            img_bgr,
+            fov_mask=fov_mask,
+            return_details=True,
+        )
     zone_b_mask = anatomy.build_zone_b_mask(binary_mask.shape, od_center, od_radius, inner_scale=1.0, outer_scale=2.0)
     od_mask = anatomy.build_zone_b_mask(binary_mask.shape, od_center, od_radius, inner_scale=0.0, outer_scale=1.0)
 
@@ -392,6 +418,8 @@ def extract_features(binary_mask, en_green, skeleton=None, img_bgr=None, av_mode
             zone_mask=zone_b_mask,
             img_bgr=img_bgr,
             av_model=av_model,
+            artery_mask=artery_mask,
+            vein_mask=vein_mask,
         )
     else:
         torts, a_diams, v_diams = [], [], []

@@ -55,7 +55,8 @@ def _cross_section_diameter(binary_mask, y, x, angle_rad, half_width=15):
 
 def _build_skeleton_segments(skeleton_bin, binary_mask, en_green,
                               brightness_threshold,
-                              img_bgr=None, av_model=None):
+                              img_bgr=None, av_model=None,
+                              artery_mask=None, vein_mask=None):
     """
     Trích xuất từng đoạn skeleton, phân loại A/V, đo đường kính.
     Trả về list dict: { cy, cx, tort, diam, is_artery, path_coords }
@@ -75,6 +76,13 @@ def _build_skeleton_segments(skeleton_bin, binary_mask, en_green,
             _av_predict = _fn
         except ImportError:
             pass
+
+    # Deep A/V pixel masks take priority over SVM classifier
+    _use_deep_av = (
+        artery_mask is not None and vein_mask is not None
+        and artery_mask.shape[:2] == binary_mask.shape
+        and vein_mask.shape[:2] == binary_mask.shape
+    )
 
     import warnings
     with warnings.catch_warnings():
@@ -120,20 +128,24 @@ def _build_skeleton_segments(skeleton_bin, binary_mask, en_green,
             if diam < 1:
                 continue
 
-            if _av_predict is not None:
+            if _use_deep_av:
+                h_m, w_m = binary_mask.shape
+                if 0 <= my < h_m and 0 <= mx < w_m:
+                    if artery_mask[my, mx] > 0:
+                        is_artery = True
+                    elif vein_mask[my, mx] > 0:
+                        is_artery = False
+                    else:
+                        avg_int = float(en_green[my, mx]) if 0 <= my < h_m and 0 <= mx < w_m else brightness_threshold
+                        is_artery = avg_int > brightness_threshold
+                else:
+                    is_artery = float(en_green[my, mx]) > brightness_threshold
+            elif _av_predict is not None:
                 is_artery = _av_predict(av_model, img_bgr, en_green, binary_mask, path)
             else:
-                h, w = en_green.shape
-                avg_int = float(en_green[my, mx]) if 0 <= my < h and 0 <= mx < w else brightness_threshold
+                h_m, w_m = en_green.shape
+                avg_int = float(en_green[my, mx]) if 0 <= my < h_m and 0 <= mx < w_m else brightness_threshold
                 is_artery = avg_int > brightness_threshold
-
-            segments.append({
-                "cy": my, "cx": mx,
-                "tort": tort,
-                "diam": diam,
-                "is_artery": is_artery,
-                "path": path,
-            })
         except Exception:
             continue
 
@@ -175,7 +187,8 @@ def draw_optic_disc_vis(img_bgr, od_center, od_radius):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def draw_av_calibre_map(skeleton_bin, vessel_mask, en_green,
-                        fov_mask=None, img_bgr=None, av_model=None):
+                        fov_mask=None, img_bgr=None, av_model=None,
+                        artery_mask=None, vein_mask=None):
     """
     Panel 2: Bản đồ đường kính (calibre) A/V trên nền đen.
     Màu từ xanh → vàng → đỏ biểu thị đường kính từ nhỏ → lớn.
@@ -204,7 +217,8 @@ def draw_av_calibre_map(skeleton_bin, vessel_mask, en_green,
 
     segments = _build_skeleton_segments(
         skeleton_bin, vessel_mask, en_green, brightness_threshold,
-        img_bgr=img_bgr, av_model=av_model
+        img_bgr=img_bgr, av_model=av_model,
+        artery_mask=artery_mask, vein_mask=vein_mask
     )
 
     if not segments:
@@ -342,7 +356,8 @@ def draw_discontinuity_map(skeleton, vessel_mask, fov_mask):
     return vis
 
 
-def draw_structural_map(skeleton, vessel_mask, en_green=None, fov_mask=None, img_bgr=None, av_model=None):
+def draw_structural_map(skeleton, vessel_mask, en_green=None, fov_mask=None, img_bgr=None, av_model=None,
+                        artery_mask=None, vein_mask=None):
     """
     Panel 3: Bản đồ Cấu trúc — skeleton + gap/endpoint markers.
     Hiện tại được triển khai trên cùng logic với draw_discontinuity_map.
@@ -415,7 +430,8 @@ def draw_vessel_segmentation(vessel_mask, en_green=None, fov_mask=None):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def draw_diameter_heatmap(skeleton_bin, vessel_mask, en_green,
-                          fov_mask=None, img_bgr=None, av_model=None):
+                          fov_mask=None, img_bgr=None, av_model=None,
+                          artery_mask=None, vein_mask=None):
     """
     Panel 4: Mỗi điểm trên skeleton được tô màu theo đường kính thực đo.
     Xanh = mạch nhỏ/hẹp bất thường, Vàng = bình thường, Đỏ = phồng/giãn bất thường.
@@ -442,7 +458,8 @@ def draw_diameter_heatmap(skeleton_bin, vessel_mask, en_green,
 
     segments = _build_skeleton_segments(
         skeleton_bin, vessel_mask, en_green, brightness_threshold,
-        img_bgr=img_bgr, av_model=av_model
+        img_bgr=img_bgr, av_model=av_model,
+        artery_mask=artery_mask, vein_mask=vein_mask
     )
 
     if not segments:
@@ -542,7 +559,7 @@ def draw_diameter_heatmap(skeleton_bin, vessel_mask, en_green,
 def draw_feature_map(img_disp, vessel_mask, en_green, regions,
                      img_no_bg=None, fov_mask=None, skeleton=None,
                      img_bgr=None, av_model=None, return_debug=False,
-                     anatomy_details=None):
+                     anatomy_details=None, artery_mask=None, vein_mask=None):
     """
     Bản đồ lâm sàng tổng hợp:
     - Nền: ảnh fundus làm mờ (để marker nổi bật hơn)
@@ -579,7 +596,8 @@ def draw_feature_map(img_disp, vessel_mask, en_green, regions,
     if _SKAN_AVAILABLE and skeleton is not None:
         segments = _build_skeleton_segments(
             skeleton, vessel_mask, en_green, brightness_threshold,
-            img_bgr=img_bgr, av_model=av_model
+            img_bgr=img_bgr, av_model=av_model,
+            artery_mask=artery_mask, vein_mask=vein_mask
         )
 
         if segments:

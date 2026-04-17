@@ -178,6 +178,8 @@ class StrokeApp(QMainWindow):
         self.av_model = av_classifier.load_av_classifier()
         self._last_image_refs = {}
         self.deep_models = None
+        self.od_models = None
+        self.av_ensemble = None
         self.deep_device = "cpu"
         self._deep_backend_error = None
         self.initUI()
@@ -467,6 +469,34 @@ class StrokeApp(QMainWindow):
 
         return self.deep_models
 
+    def _load_od_models(self):
+        """Lazy-load OD wnet ensemble (cached). Returns list or None."""
+        if self.od_models is not None:
+            return self.od_models if self.od_models else None
+        try:
+            import od_backend
+            models = od_backend.load_od_ensemble(n_models=3, device=self.deep_device)
+            self.od_models = models if models else []
+        except Exception as exc:
+            import warnings
+            warnings.warn(f"[main] OD backend load failed: {exc}")
+            self.od_models = []
+        return self.od_models if self.od_models else None
+
+    def _load_av_ensemble(self):
+        """Lazy-load AV Generator ensemble (cached). Returns list or None."""
+        if self.av_ensemble is not None:
+            return self.av_ensemble if self.av_ensemble else None
+        try:
+            import av_backend
+            ensemble = av_backend.load_av_ensemble(n_models=2, device=self.deep_device)
+            self.av_ensemble = ensemble if ensemble else []
+        except Exception as exc:
+            import warnings
+            warnings.warn(f"[main] AV backend load failed: {exc}")
+            self.av_ensemble = []
+        return self.av_ensemble if self.av_ensemble else None
+
     def _run_selected_backend(self, img_disp):
         backend_requested = self.cbo_backend.currentData()
         if backend_requested == "automorph":
@@ -540,11 +570,40 @@ class StrokeApp(QMainWindow):
             # ── Hiển thị ảnh gốc (đã loại nền) ──
             self.set_label_image(self.lbl_orig, img_no_bg)
 
+            # ── Deep OD detection + Deep A/V classification (AutoMorph mode only) ──
+            od_center_override = od_radius_override = None
+            od_conf_deep = None
+            artery_mask = vein_mask = None
+
+            if backend_result["backend_used"] == "automorph":
+                od_mods = self._load_od_models()
+                if od_mods:
+                    try:
+                        import od_backend
+                        od_center_override, od_radius_override, od_conf_deep, _ = \
+                            od_backend.detect_optic_disc_deep(img_disp, od_mods, self.deep_device)
+                    except Exception as _e:
+                        pass  # Fall back to heuristic silently
+
+                av_ens = self._load_av_ensemble()
+                if av_ens:
+                    try:
+                        import av_backend
+                        artery_mask, vein_mask = av_backend.segment_av_deep(
+                            img_disp, av_ens, self.deep_device
+                        )
+                    except Exception as _e:
+                        pass  # Fall back to SVM silently
+
             # ── Feature extraction ──
             feats, regions, feat_details = feature_extract.extract_features(
                 mask, en, skeleton=skel,
                 img_bgr=img_disp, av_model=self.av_model,
-                fov_mask=fov_mask, return_details=True
+                fov_mask=fov_mask, return_details=True,
+                od_center_override=od_center_override,
+                od_radius_override=od_radius_override,
+                artery_mask=artery_mask,
+                vein_mask=vein_mask,
             )
             av_ratio, crae, crve, tort, std_tort, density, fractal_dim, disc_score, endpoint_score, white_score = feats
 
@@ -559,7 +618,11 @@ class StrokeApp(QMainWindow):
             low_visibility_may_be_pathology = bool(
                 quality.get("low_vessel_visibility_may_be_pathology", False)
             )
-            od_confidence = float(od_details.get("confidence", 0.0))
+            # Deep OD confidence overrides heuristic confidence
+            if od_conf_deep is not None:
+                od_confidence = float(od_conf_deep)
+            else:
+                od_confidence = float(od_details.get("confidence", 0.0))
 
             # ── Panel 1: Optic Disc + Zone B ──
             od_vis = draw.draw_optic_disc_vis(img_no_bg, od_center, od_radius)
@@ -568,14 +631,16 @@ class StrokeApp(QMainWindow):
             # ── Panel 2: A/V Calibre Heat-map ──
             av_calibre = draw.draw_av_calibre_map(
                 skel, mask, en, fov_mask=fov_mask,
-                img_bgr=img_disp, av_model=self.av_model
+                img_bgr=img_disp, av_model=self.av_model,
+                artery_mask=artery_mask, vein_mask=vein_mask
             )
             self.set_label_image(self.lbl_mask, av_calibre)
 
             # ── Panel 3: Bản đồ Cấu trúc (Đứt đoạn & Xoắn vặn) ──
             structural_map = draw.draw_structural_map(
                 skel, mask, en, fov_mask=fov_mask,
-                img_bgr=img_disp, av_model=self.av_model
+                img_bgr=img_disp, av_model=self.av_model,
+                artery_mask=artery_mask, vein_mask=vein_mask
             )
             self.set_label_image(self.lbl_skel, structural_map)
 
@@ -586,7 +651,8 @@ class StrokeApp(QMainWindow):
             # ── Panel 5: Heat-map hẹp/phồng ──
             diam_heat = draw.draw_diameter_heatmap(
                 skel, mask, en, fov_mask=fov_mask,
-                img_bgr=img_disp, av_model=self.av_model
+                img_bgr=img_disp, av_model=self.av_model,
+                artery_mask=artery_mask, vein_mask=vein_mask
             )
             self.set_label_image(self.lbl_closing, diam_heat)
 
@@ -609,6 +675,7 @@ class StrokeApp(QMainWindow):
                 skeleton=skel, img_bgr=img_disp,
                 av_model=self.av_model, return_debug=True,
                 anatomy_details=feat_details,
+                artery_mask=artery_mask, vein_mask=vein_mask,
             )
             self.lbl_clinical.set_cv_image(f_map)
 
@@ -657,17 +724,13 @@ class StrokeApp(QMainWindow):
                 model = joblib.load(MODEL_PATH)
                 prob = model.predict_proba([feats])[0][1]
 
-                # ══ Override cứng cho trường hợp chỉ số cực kỳ bất thường ══
-                # ML model có thể bỏ sót RAO/CRVO nặng vì training data không đủ
-                # Các quy tắc dựa trên tiêu chuẩn lâm sàng được chứng minh:
+                # Kiểm tra dấu hiệu lâm sàng RAO (chỉ để cảnh báo, không ép xác suất ML)
                 rao_suspected = (
-                    av_ratio < 0.30 or                           # AV ratio cực thấp: tắc động mạch
+                    av_ratio < 0.30 or                           # AV ratio cực thấp
                     (crae < 2.0 and crve > 3.0) or               # Artery gần biến mất, vein còn thấy
                     (fractal_dim < 1.20 and av_ratio < 0.50) or  # Cây mạch rất thưa + hẹp nặng
                     (av_ratio < 0.40 and density < 0.08)         # Hẹp + mật độ thấp kép
                 )
-                if rao_suspected:
-                    prob = max(prob, 0.88)   # Ép ít nhất 88%
 
                 if prob >= 0.70:
                     status = "NGUY CƠ CAO"
@@ -686,6 +749,13 @@ class StrokeApp(QMainWindow):
                 )
 
                 msg = f"<h2 style='color:{color};'>{status} ({prob * 100:.1f}%)</h2>"
+                if rao_suspected:
+                    msg += (
+                        "<div style='margin:4px 0 8px 0; padding:8px 10px; border-radius:8px; "
+                        "background:#431407; border:1px solid #ea580c; color:#fb923c; font-weight:bold;'>"
+                        "⚠ Nghi ngờ tắc động mạch võng mạc (RAO) — cần bác sĩ đánh giá trực tiếp."
+                        "</div>"
+                    )
                 if review_needed:
                     msg += (
                         "<div style='margin:6px 0 10px 0; padding:8px 10px; border-radius:8px; "
