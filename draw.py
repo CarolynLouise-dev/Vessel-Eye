@@ -342,6 +342,14 @@ def draw_discontinuity_map(skeleton, vessel_mask, fov_mask):
     return vis
 
 
+def draw_structural_map(skeleton, vessel_mask, en_green=None, fov_mask=None, img_bgr=None, av_model=None):
+    """
+    Panel 3: Bản đồ Cấu trúc — skeleton + gap/endpoint markers.
+    Hiện tại được triển khai trên cùng logic với draw_discontinuity_map.
+    """
+    return draw_discontinuity_map(skeleton, vessel_mask, fov_mask)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # PUBLIC: Panel 3 — Phân đoạn mạch máu B&W cực rõ
 # ══════════════════════════════════════════════════════════════════════════════

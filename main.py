@@ -177,6 +177,9 @@ class StrokeApp(QMainWindow):
         self.setStyleSheet("QMainWindow { background-color: #0f172a; }")
         self.av_model = av_classifier.load_av_classifier()
         self._last_image_refs = {}
+        self.deep_models = None
+        self.deep_device = "cpu"
+        self._deep_backend_error = None
         self.initUI()
 
     def initUI(self):
@@ -252,6 +255,29 @@ class StrokeApp(QMainWindow):
             "padding: 16px; font-weight: bold; font-size: 13px; border: none; }"
             "QPushButton:hover { background-color: #0369a1; }"
             "QPushButton:pressed { background-color: #075985; }")
+
+        backend_row = QHBoxLayout()
+        backend_lbl = QLabel("Backend phân đoạn")
+        backend_lbl.setStyleSheet("color: #94a3b8; font-size: 11px; border: none;")
+        self.cbo_backend = QComboBox()
+        self.cbo_backend.addItem("Classical Frangi", "classical")
+        self.cbo_backend.addItem("AutoMorph DL", "automorph")
+        self.cbo_backend.setStyleSheet(
+            "QComboBox { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; "
+            "border-radius: 6px; padding: 6px 8px; }"
+            "QComboBox::drop-down { border: none; }"
+        )
+        backend_row.addWidget(backend_lbl)
+        backend_row.addWidget(self.cbo_backend, stretch=1)
+        side_panel.addLayout(backend_row)
+
+        self.lbl_backend_hint = QLabel(
+            "Classical nhanh hơn; AutoMorph cho phân đoạn deep để đối chiếu lâm sàng."
+        )
+        self.lbl_backend_hint.setWordWrap(True)
+        self.lbl_backend_hint.setStyleSheet("color: #64748b; font-size: 10px; border: none;")
+        side_panel.addWidget(self.lbl_backend_hint)
+
         btn_upload.clicked.connect(self.upload_and_process)
         side_panel.addWidget(btn_upload)
         side_panel.addStretch()
@@ -276,16 +302,22 @@ class StrokeApp(QMainWindow):
         self.lbl_od, self.cont_od = self.img_box(
             "🎯  OPTIC DISC — Vùng Zone B phân tích")
         self.lbl_mask, self.cont_mask = self.img_box(
-            "🩸  A/V CALIBRE — Đường kính động/tĩnh mạch (nhiệt độ màu)")
+            "🩸  PHÂN LOẠI A/V — Mạng Động/Tĩnh mạch")
         self.lbl_skel, self.cont_skel = self.img_box(
-            "🔬  PHÂN ĐOẠN MẠCH — Trích xuất mạch máu rõ nét (B&W)")
+            "🔬  BẢN ĐỒ CẤU TRÚC — Đứt đoạn & Xoắn vặn")
+        self.lbl_seg, self.cont_seg = self.img_box(
+            "🧭  MẠCH MÁU — Phân đoạn rõ nét")
         self.lbl_closing, self.cont_closing = self.img_box(
-            "🌡  HEAT-MAP HẸP/PHỒNG — Biến đổi đường kính dọc mạch")
+            "🌡  HEAT-MAP HẸP/PHỒNG — Đường kính tuyệt đối")
+        self.lbl_extra, self.cont_extra = self.img_box(
+            "⚙️  PANEL MỞ RỘNG — Đang chờ nâng cấp")
 
         grid_imgs.addWidget(self.cont_od, 0, 0)
         grid_imgs.addWidget(self.cont_mask, 0, 1)
         grid_imgs.addWidget(self.cont_skel, 1, 0)
-        grid_imgs.addWidget(self.cont_closing, 1, 1)
+        grid_imgs.addWidget(self.cont_seg, 1, 1)
+        grid_imgs.addWidget(self.cont_closing, 2, 0)
+        grid_imgs.addWidget(self.cont_extra, 2, 1)
         grid_imgs.setColumnStretch(0, 1)
         grid_imgs.setColumnStretch(1, 1)
         center_panel.addLayout(grid_imgs)
@@ -311,7 +343,7 @@ class StrokeApp(QMainWindow):
         header_metrics.setStyleSheet("background: transparent; border: none;")
         result_panel.addWidget(header_metrics)
 
-        self.table = QTableWidget(9, 3)
+        self.table = QTableWidget(12, 3)
         self.table.setHorizontalHeaderLabels(["Chỉ số", "Giá trị", "Tham chiếu"])
         self.table.setStyleSheet(
             "QTableWidget { background: #1e293b; color: #e2e8f0; border-radius: 10px; "
@@ -414,6 +446,78 @@ class StrokeApp(QMainWindow):
         for _, (label, img, is_gray) in self._last_image_refs.items():
             self.set_label_image(label, img, is_gray=is_gray)
 
+    def _load_deep_models(self):
+        if self.deep_models is not None:
+            return self.deep_models
+
+        try:
+            import deep_backend
+            models = deep_backend.load_vessel_seg_ensemble(n_models=3, device=self.deep_device)
+            if not models:
+                self._deep_backend_error = (
+                    "Không tải được AutoMorph DL. Ứng dụng sẽ fallback về Classical Frangi."
+                )
+                self.deep_models = []
+            else:
+                self.deep_models = models
+                self._deep_backend_error = None
+        except Exception as exc:
+            self.deep_models = []
+            self._deep_backend_error = f"AutoMorph DL lỗi tải model: {exc}"
+
+        return self.deep_models
+
+    def _run_selected_backend(self, img_disp):
+        backend_requested = self.cbo_backend.currentData()
+        if backend_requested == "automorph":
+            models = self._load_deep_models()
+            if models:
+                import deep_backend
+                en, mask, skel, img_no_bg, fov_mask = deep_backend.get_enhanced_vessels_deep(
+                    img_disp,
+                    models=models,
+                    device=self.deep_device,
+                )
+                return {
+                    "backend_requested": "automorph",
+                    "backend_used": "automorph",
+                    "backend_label": "AutoMorph DL",
+                    "backend_note": "Đang dùng vessel segmentation deep từ AutoMorph.",
+                    "backend_warning": None,
+                    "en": en,
+                    "mask": mask,
+                    "skel": skel,
+                    "img_no_bg": img_no_bg,
+                    "fov_mask": fov_mask,
+                }
+
+            return {
+                "backend_requested": "automorph",
+                "backend_used": "classical",
+                "backend_label": "Classical Frangi (fallback)",
+                "backend_note": "AutoMorph không sẵn sàng nên đã tự động fallback về Classical.",
+                "backend_warning": self._deep_backend_error,
+                "en": None,
+                "mask": None,
+                "skel": None,
+                "img_no_bg": None,
+                "fov_mask": None,
+            }
+
+        en, mask, skel, img_no_bg, fov_mask = riched_image.get_enhanced_vessels(img_disp)
+        return {
+            "backend_requested": "classical",
+            "backend_used": "classical",
+            "backend_label": "Classical Frangi",
+            "backend_note": "Đang dùng pipeline segmentation cổ điển hiện tại.",
+            "backend_warning": None,
+            "en": en,
+            "mask": mask,
+            "skel": skel,
+            "img_no_bg": img_no_bg,
+            "fov_mask": fov_mask,
+        }
+
     def upload_and_process(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Chọn ảnh", "", "Images (*.jpg *.png *.jpeg)")
         if not file_path:
@@ -424,7 +528,14 @@ class StrokeApp(QMainWindow):
             img_disp = input_data.standardize_fundus_image(img_raw, IMG_SIZE)
 
             # ── Pipeline xử lý ảnh ──
-            en, mask, skel, img_no_bg, fov_mask = riched_image.get_enhanced_vessels(img_disp)
+            backend_result = self._run_selected_backend(img_disp)
+            en = backend_result["en"]
+            mask = backend_result["mask"]
+            skel = backend_result["skel"]
+            img_no_bg = backend_result["img_no_bg"]
+            fov_mask = backend_result["fov_mask"]
+            if en is None:
+                en, mask, skel, img_no_bg, fov_mask = riched_image.get_enhanced_vessels(img_disp)
 
             # ── Hiển thị ảnh gốc (đã loại nền) ──
             self.set_label_image(self.lbl_orig, img_no_bg)
@@ -439,6 +550,16 @@ class StrokeApp(QMainWindow):
 
             od_center = feat_details.get("od_center", (img_disp.shape[1] // 2, img_disp.shape[0] // 2))
             od_radius = feat_details.get("od_radius", 30)
+            od_details = feat_details.get("od_details", {})
+            quality = feat_details.get("quality", {})
+            quality_score = float(quality.get("quality_score", 0.0))
+            quality_level = quality.get("quality_level", "unknown")
+            quality_action = quality.get("quality_action", "review")
+            quality_reasons = quality.get("reasons", [])
+            low_visibility_may_be_pathology = bool(
+                quality.get("low_vessel_visibility_may_be_pathology", False)
+            )
+            od_confidence = float(od_details.get("confidence", 0.0))
 
             # ── Panel 1: Optic Disc + Zone B ──
             od_vis = draw.draw_optic_disc_vis(img_no_bg, od_center, od_radius)
@@ -451,16 +572,35 @@ class StrokeApp(QMainWindow):
             )
             self.set_label_image(self.lbl_mask, av_calibre)
 
-            # ── Panel 3: Phân đoạn mạch máu B&W rõ nét ──
-            vessel_bw = draw.draw_vessel_segmentation(mask, en_green=en, fov_mask=fov_mask)
-            self.set_label_image(self.lbl_skel, vessel_bw, is_gray=True)
+            # ── Panel 3: Bản đồ Cấu trúc (Đứt đoạn & Xoắn vặn) ──
+            structural_map = draw.draw_structural_map(
+                skel, mask, en, fov_mask=fov_mask,
+                img_bgr=img_disp, av_model=self.av_model
+            )
+            self.set_label_image(self.lbl_skel, structural_map)
 
-            # ── Panel 4: Heat-map hẹp/phồng ──
+            # ── Panel 4: Phân đoạn mạch máu B&W rõ nét ──
+            vessel_bw = draw.draw_vessel_segmentation(mask, en_green=en, fov_mask=fov_mask)
+            self.set_label_image(self.lbl_seg, vessel_bw, is_gray=True)
+
+            # ── Panel 5: Heat-map hẹp/phồng ──
             diam_heat = draw.draw_diameter_heatmap(
                 skel, mask, en, fov_mask=fov_mask,
                 img_bgr=img_disp, av_model=self.av_model
             )
             self.set_label_image(self.lbl_closing, diam_heat)
+
+            # ── Panel 6: Placeholder — mở rộng sau ──
+            extra_vis = img_no_bg.copy()
+            cv2.putText(extra_vis, "PANEL MỞ RỘNG", (18, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.78,
+                        (240, 240, 240), 2, cv2.LINE_AA)
+            cv2.putText(extra_vis, f"Backend: {backend_result['backend_label']}", (18, 64), cv2.FONT_HERSHEY_SIMPLEX, 0.48,
+                        (190, 190, 190), 1, cv2.LINE_AA)
+            cv2.putText(extra_vis, "Nội dung đang chờ cập nhật", (18, 92), cv2.FONT_HERSHEY_SIMPLEX, 0.48,
+                        (190, 190, 190), 1, cv2.LINE_AA)
+            overlay = np.full_like(extra_vis, (18, 26, 42))
+            extra_vis = cv2.addWeighted(extra_vis, 0.72, overlay, 0.28, 0)
+            self.set_label_image(self.lbl_extra, extra_vis)
 
             # ── Bản đồ lâm sàng (Zoomable) ──
             f_map, debug_map = draw.draw_feature_map(
@@ -475,6 +615,9 @@ class StrokeApp(QMainWindow):
             # ── Bảng chỉ số ──
             ranges = {"AV": 0.65, "Tort": 1.50, "Density": 0.05, "Endpoint": 0.05}
             metrics = [
+                ("Backend phân đoạn",      backend_result["backend_label"], "Classical / AutoMorph"),
+                ("Độ tin cậy ảnh",         f"{quality_score * 100:.1f}%",   quality_level),
+                ("Độ tin cậy đĩa thị",     f"{od_confidence * 100:.1f}%",    "> 40%"),
                 ("Tỷ lệ A/V Ratio",      f"{av_ratio:.4f}",          f"> {ranges['AV']}"),
                 ("CRAE (artery calib)",   f"{crae:.2f}",              "tham chiếu nội bộ"),
                 ("CRVE (vein calib)",     f"{crve:.2f}",              "tham chiếu nội bộ"),
@@ -486,18 +629,20 @@ class StrokeApp(QMainWindow):
                 ("Endpoint gap score",    f"{endpoint_score:.4f}",    f"< {ranges['Endpoint']:.2f}"),
             ]
 
-            self.table.setRowCount(9)
+            self.table.setRowCount(len(metrics))
             for i, (n, v, r) in enumerate(metrics):
                 self.table.setItem(i, 0, QTableWidgetItem(n))
                 it_v = QTableWidgetItem(v)
                 is_abnormal = (
-                    (i == 0 and av_ratio < ranges["AV"]) or          # AV ratio
-                    (i == 1 and crae < 2.0) or                        # CRAE cực thấp → RAO
-                    (i == 3 and tort > ranges["Tort"]) or             # Tortuosity
-                    (i == 5 and density < ranges["Density"]) or       # Mật độ
-                    (i == 6 and (fractal_dim < 1.3 or fractal_dim > 1.7)) or  # Fractal ngoài ngưỡng
-                    (i == 7 and disc_score > 0.15) or                 # Discontinuity
-                    (i == 8 and endpoint_score > ranges["Endpoint"])  # Endpoint gap
+                    (i == 1 and quality_score < 0.68) or               # Image quality confidence
+                    (i == 2 and od_confidence < 0.40) or               # Optic disc confidence
+                    (i == 3 and av_ratio < ranges["AV"]) or           # AV ratio
+                    (i == 4 and crae < 2.0) or                         # CRAE cực thấp → RAO
+                    (i == 6 and tort > ranges["Tort"]) or             # Tortuosity
+                    (i == 8 and density < ranges["Density"]) or       # Mật độ
+                    (i == 9 and (fractal_dim < 1.3 or fractal_dim > 1.7)) or  # Fractal ngoài ngưỡng
+                    (i == 10 and disc_score > 0.15) or                 # Discontinuity
+                    (i == 11 and endpoint_score > ranges["Endpoint"]) # Endpoint gap
                 )
                 if is_abnormal:
                     it_v.setForeground(QColor("#ef4444"))
@@ -534,10 +679,28 @@ class StrokeApp(QMainWindow):
                     status = "NGUY CƠ THẤP"
                     color = "#22c55e"
 
+                review_needed = (
+                    quality_action != "proceed" or
+                    od_confidence < 0.40 or
+                    backend_result["backend_used"] != backend_result["backend_requested"]
+                )
+
                 msg = f"<h2 style='color:{color};'>{status} ({prob * 100:.1f}%)</h2>"
+                if review_needed:
+                    msg += (
+                        "<div style='margin:6px 0 10px 0; padding:8px 10px; border-radius:8px; "
+                        "background:#1e293b; border:1px solid #334155; color:#fbbf24; font-weight:bold;'>"
+                        "CẦN BÁC SĨ XEM LẠI VÌ ĐỘ TIN CẬY CHƯA CAO"
+                        "</div>"
+                    )
                 msg += "<p><b>Phát hiện bệnh lý:</b></p>"
 
                 pathos = []
+                pathos.append(f"• Backend phân đoạn đang dùng: {backend_result['backend_label']}.")
+                if backend_result["backend_warning"]:
+                    pathos.append(f"• {backend_result['backend_warning']}")
+                elif backend_result["backend_note"]:
+                    pathos.append(f"• {backend_result['backend_note']}")
 
                 # ── Dấu hiệu nặng (ưu tiên hiển thị trước) ──
                 if av_ratio < 0.30:
@@ -562,6 +725,15 @@ class StrokeApp(QMainWindow):
                     pathos.append("• Tăng đứt đoạn mạng mạch (discontinuity cao).")
                 if endpoint_score > ranges["Endpoint"]:
                     pathos.append("• Nhiều cặp endpoint gap nghi đứt đoạn dài.")
+                if quality_action != "proceed":
+                    pathos.append(f"• Độ tin cậy ảnh ở mức {quality_level}; nên đọc kết quả cùng đánh giá lâm sàng trực tiếp.")
+                if od_confidence < 0.40:
+                    pathos.append("• Tâm đĩa thị được phát hiện với độ tin cậy thấp; các chỉ số quanh Zone B có thể dao động.")
+                if low_visibility_may_be_pathology:
+                    pathos.append("• Mạch máu hiện thưa nhưng ảnh không quá mờ; không nên tự động coi đây chỉ là ảnh kém chất lượng.")
+                for reason in quality_reasons[:2]:
+                    if reason not in pathos:
+                        pathos.append(f"• {reason}")
                 if not pathos:
                     pathos.append("• Các chỉ số hình thái mạch máu trong giới hạn bình thường.")
 

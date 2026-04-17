@@ -2,6 +2,7 @@ import warnings
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
+import argparse
 import json
 import os
 from datetime import datetime
@@ -28,7 +29,16 @@ import av_classifier
 REPORTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
 
 
-def _collect_features(dataset_path, av_model=None):
+def _get_vessel_bundle(img, backend="classical", deep_models=None, device="cpu"):
+    if backend == "automorph":
+        import deep_backend
+        if not deep_models:
+            raise RuntimeError("AutoMorph backend requested but deep models are unavailable.")
+        return deep_backend.get_enhanced_vessels_deep(img, models=deep_models, device=device)
+    return riched_image.get_enhanced_vessels(img)
+
+
+def _collect_features(dataset_path, av_model=None, backend="classical", deep_models=None, device="cpu"):
     X_features, y_labels = [], []
 
     if not os.path.exists(dataset_path):
@@ -57,7 +67,12 @@ def _collect_features(dataset_path, av_model=None):
             n_total += 1
 
             try:
-                en, mask, skeleton, *_ = riched_image.get_enhanced_vessels(img)
+                en, mask, skeleton, *_ = _get_vessel_bundle(
+                    img,
+                    backend=backend,
+                    deep_models=deep_models,
+                    device=device,
+                )
                 feats, _ = feature_extract.extract_features(
                     mask, en, skeleton=skeleton,
                     img_bgr=img, av_model=av_model
@@ -77,7 +92,7 @@ def _collect_features(dataset_path, av_model=None):
     return X_features, y_labels
 
 
-def train_optimized(dataset_path):
+def train_optimized(dataset_path, backend="classical", deep_n_models=3, device="cpu"):
     os.makedirs(MODEL_DIR, exist_ok=True)
     os.makedirs(REPORTS_DIR, exist_ok=True)
 
@@ -89,9 +104,23 @@ def train_optimized(dataset_path):
     print("[0/4] Pre-training A/V SVM Classifier ...")
     av_mdl = av_classifier.train_av_classifier(dataset_path)
 
+    deep_models = None
+    if backend == "automorph":
+        import deep_backend
+        print(f"[0b/4] Loading AutoMorph ensemble ({deep_n_models} model(s)) on {device} ...")
+        deep_models = deep_backend.load_vessel_seg_ensemble(n_models=deep_n_models, device=device)
+        if not deep_models:
+            raise RuntimeError("AutoMorph backend requested but no deep models could be loaded.")
+
     # Step 1: Feature extraction
     print("[1/4] Extracting features ...")
-    X_features, y_labels = _collect_features(dataset_path, av_model=av_mdl)
+    X_features, y_labels = _collect_features(
+        dataset_path,
+        av_model=av_mdl,
+        backend=backend,
+        deep_models=deep_models,
+        device=device,
+    )
 
     if not X_features:
         print("ERROR: No features extracted!")
@@ -193,6 +222,7 @@ def train_optimized(dataset_path):
         "generated_at": datetime.now().isoformat(),
         "dataset": {
             "path": dataset_path,
+            "backend": backend,
             "total_samples": n_samples,
             "label_0_normal": n_neg,
             "label_1_high_risk": n_pos,
@@ -228,4 +258,17 @@ def train_optimized(dataset_path):
 
 
 if __name__ == "__main__":
-    train_optimized("dataset")
+    parser = argparse.ArgumentParser(description="Train Vessel-Eye random forest model")
+    parser.add_argument("--dataset", default="dataset", help="Dataset root containing 0/ and 1/")
+    parser.add_argument("--backend", choices=["classical", "automorph"], default="classical",
+                        help="Vessel segmentation backend used before feature extraction")
+    parser.add_argument("--n_models", type=int, default=3,
+                        help="Number of AutoMorph ensemble models when backend=automorph")
+    parser.add_argument("--device", default="cpu", help="Torch device for AutoMorph backend")
+    args = parser.parse_args()
+    train_optimized(
+        args.dataset,
+        backend=args.backend,
+        deep_n_models=args.n_models,
+        device=args.device,
+    )

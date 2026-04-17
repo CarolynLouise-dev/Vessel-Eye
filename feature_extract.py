@@ -5,6 +5,7 @@ import numpy as np
 from skimage.measure import label, regionprops
 
 import anatomy
+import quality_assessment
 
 try:
     from skan import Skeleton, summarize
@@ -364,9 +365,20 @@ def extract_features(binary_mask, en_green, skeleton=None, img_bgr=None, av_mode
     if img_bgr is None:
         img_bgr = cv2.cvtColor(en_green, cv2.COLOR_GRAY2BGR)
 
-    od_center, od_radius = anatomy.detect_optic_disc(img_bgr, fov_mask=fov_mask)
+    od_center, od_radius, od_details = anatomy.detect_optic_disc(
+        img_bgr,
+        fov_mask=fov_mask,
+        return_details=True,
+    )
     zone_b_mask = anatomy.build_zone_b_mask(binary_mask.shape, od_center, od_radius, inner_scale=1.0, outer_scale=2.0)
     od_mask = anatomy.build_zone_b_mask(binary_mask.shape, od_center, od_radius, inner_scale=0.0, outer_scale=1.0)
+
+    quality = quality_assessment.assess_image_quality(
+        img_bgr,
+        en_green=en_green,
+        vessel_mask=binary_mask,
+        fov_mask=fov_mask,
+    )
 
     zone_valid = zone_b_mask > 0
     zone_area = float(np.count_nonzero(zone_valid))
@@ -412,12 +424,14 @@ def extract_features(binary_mask, en_green, skeleton=None, img_bgr=None, av_mode
     details = {
         "od_center": od_center,
         "od_radius": od_radius,
+        "od_details": od_details,
         "zone_b_mask": zone_b_mask,
         "crae": crae,
         "crve": crve,
         "discontinuity_score": discontinuity,
         "endpoint_gap_score": endpoint_gap,
         "whitening_score": whitening,
+        "quality": quality,
     }
 
     if return_details:
