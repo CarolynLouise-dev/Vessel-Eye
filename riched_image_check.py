@@ -2,7 +2,6 @@ import cv2
 import numpy as np
 from skimage.filters import frangi
 from skimage.morphology import skeletonize
-import warnings
 
 
 def _ensure_odd(value):
@@ -13,41 +12,41 @@ def _ensure_odd(value):
 def get_processing_steps(img, params):
     steps = []
 
-    # ===== 1. BUILD FOV MASK =====
+    # STEP 1: FOV MASK
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     f_blur = _ensure_odd(params['fov_blur'])
     blur_fov = cv2.GaussianBlur(gray, (f_blur, f_blur), 0)
     _, mask_low = cv2.threshold(blur_fov, params['fov_low_thr'], 255, cv2.THRESH_BINARY)
     _, mask_otsu = cv2.threshold(blur_fov, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     fov_mask = cv2.bitwise_or(mask_low, mask_otsu)
-    steps.append(fov_mask)  # Hiển thị Mask
+    steps.append(fov_mask)
 
-    # ===== 2. GREEN CHANNEL + SMOOTHING =====
-    # Trong riched_image.py: green = img[:,:,1], sau đó mới GaussianBlur
+    # STEP 2: GREEN CHANNEL (Lấy gốc từ ảnh nạp vào)
     green = img[:, :, 1]
-    p_blur = _ensure_odd(params['pre_blur'])
-    green_blur = cv2.GaussianBlur(green, (p_blur, p_blur), 0)
-    # Áp mask ngay để các bước sau không bị nhiễu nền
-    green_masked = cv2.bitwise_and(green_blur, green_blur, mask=fov_mask)
+    green_masked = cv2.bitwise_and(green, green, mask=fov_mask)
     steps.append(green_masked)
 
-    # ===== 3. ILLUMINATION CORRECTION =====
+    # STEP 3: ILLUMINATION CORRECTION (Làm phẳng sáng trước khi tăng tương phản)
     k = _ensure_odd(params['illu_k'])
     la_blur = cv2.GaussianBlur(green_masked, (k, k), 0)
-    # Công thức: green * 1.0 + blur * -1.0 + 128
-    en_green = cv2.addWeighted(green_masked, 1.0, la_blur, -1.0, 128)
+    illu_fixed = cv2.addWeighted(green_masked, 1.0, la_blur, -1.0, 128)
+    illu_fixed = cv2.bitwise_and(illu_fixed, illu_fixed, mask=fov_mask)
+    steps.append(illu_fixed)
+
+    # STEP 4: CLAHE (Tăng chi tiết mạch máu trên nền đã phẳng sáng)
+    clahe = cv2.createCLAHE(clipLimit=params['clahe_clip'], tileGridSize=(8, 8))
+    en_green = clahe.apply(illu_fixed)
     en_green = cv2.bitwise_and(en_green, en_green, mask=fov_mask)
     steps.append(en_green)
 
-    # ===== 4. CLAHE ENHANCEMENT =====
-    # Thao tác trên output của Illumination
-    clahe = cv2.createCLAHE(clipLimit=params['clahe_clip'], tileGridSize=(8, 8))
-    en_green_final = clahe.apply(en_green)
-    en_green_final = cv2.bitwise_and(en_green_final, en_green_final, mask=fov_mask)
-    steps.append(en_green_final)
+    # STEP 5: GAUSSIAN BLUR (Làm mượt để khử nhiễu hạt tạo ra bởi CLAHE)
+    p_blur = _ensure_odd(params['pre_blur'])
+    smooth_final = cv2.GaussianBlur(en_green, (p_blur, p_blur), 0)
+    smooth_final = cv2.bitwise_and(smooth_final, smooth_final, mask=fov_mask)
+    steps.append(smooth_final)
 
-    # ===== 5. FRANGI VESSELNESS =====
-    resp = frangi(en_green_final,
+    # STEP 6: FRANGI FILTER
+    resp = frangi(smooth_final,
                   sigmas=np.arange(1, params['fr_scale'] + 1, 1),
                   beta=params['fr_b1'],
                   gamma=params['fr_b2'],
@@ -56,9 +55,8 @@ def get_processing_steps(img, params):
     resp_u8 = cv2.bitwise_and(resp_u8, resp_u8, mask=fov_mask)
     steps.append(resp_u8)
 
-    # ===== 6. SEGMENTATION (BINARY) =====
+    # STEP 7: SEGMENTATION & CLEANING
     _, v_mask = cv2.threshold(resp_u8, params['hyst_low'], 255, cv2.THRESH_BINARY)
-    # Lọc diện tích nhỏ (Small Components Removal)
     n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(v_mask, connectivity=8)
     v_clean = np.zeros_like(v_mask)
     for i in range(1, n_labels):
@@ -66,12 +64,8 @@ def get_processing_steps(img, params):
             v_clean[labels == i] = 255
     steps.append(v_clean)
 
-    # ===== 7. SKELETONIZE =====
+    # STEP 8: FINAL SKELETON (Đã qua Pruning)
     skeleton = (skeletonize(v_clean > 0).astype(np.uint8)) * 255
-    steps.append(skeleton)
-
-    # ===== 8. SKELETON PRUNING =====
-    # Bước cuối cùng trong riched_image.py là loại bỏ các nhánh cụt ngắn
     n_s, lab_s, stats_s, _ = cv2.connectedComponentsWithStats(skeleton, connectivity=8)
     sk_clean = np.zeros_like(skeleton)
     for i in range(1, n_s):
