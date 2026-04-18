@@ -9,6 +9,7 @@ import riched_image, feature_extract, draw
 import anatomy
 import av_classifier
 import input_data
+import model_metadata
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -211,7 +212,15 @@ class StrokeApp(QMainWindow):
         self.av_ensemble = None
         self.deep_device = "cpu"
         self._deep_backend_error = None
+        self.model_metadata = model_metadata.load_model_metadata()
         self.initUI()
+
+    def _set_backend_choice(self, backend_name):
+        for index in range(self.cbo_backend.count()):
+            if self.cbo_backend.itemData(index) == backend_name:
+                self.cbo_backend.setCurrentIndex(index)
+                return True
+        return False
 
     def initUI(self):
         central_widget = QWidget()
@@ -308,6 +317,13 @@ class StrokeApp(QMainWindow):
         self.lbl_backend_hint.setWordWrap(True)
         self.lbl_backend_hint.setStyleSheet("color: #64748b; font-size: 10px; border: none;")
         side_panel.addWidget(self.lbl_backend_hint)
+
+        trained_backend = self.model_metadata.get("backend")
+        if trained_backend in {"classical", "automorph"}:
+            self._set_backend_choice(trained_backend)
+            self.lbl_backend_hint.setText(
+                f"Model ML hiện tại được train với backend {trained_backend}; app sẽ ưu tiên backend này để giữ feature ổn định."
+            )
 
         btn_upload.clicked.connect(self.upload_and_process)
         side_panel.addWidget(btn_upload)
@@ -538,7 +554,18 @@ class StrokeApp(QMainWindow):
 
     def _run_selected_backend(self, img_disp):
         backend_requested = self.cbo_backend.currentData()
-        if backend_requested == "automorph":
+        backend_expected = self.model_metadata.get("backend")
+        backend_to_use = backend_requested
+        backend_note_suffix = None
+
+        if backend_expected in {"classical", "automorph"} and backend_requested != backend_expected:
+            backend_to_use = backend_expected
+            self._set_backend_choice(backend_expected)
+            backend_note_suffix = (
+                f"Model ML hiện tại được train với backend {backend_expected}, nên app đã tự đồng bộ backend để tránh lệch feature."
+            )
+
+        if backend_to_use == "automorph":
             models = self._load_deep_models()
             if models:
                 import deep_backend
@@ -549,10 +576,11 @@ class StrokeApp(QMainWindow):
                     return_details=True,
                 )
                 return {
-                    "backend_requested": "automorph",
+                    "backend_requested": backend_requested,
+                    "backend_expected": backend_expected,
                     "backend_used": "automorph",
                     "backend_label": "AutoMorph DL",
-                    "backend_note": "Đang dùng vessel segmentation deep từ AutoMorph.",
+                    "backend_note": backend_note_suffix or "Đang dùng vessel segmentation deep từ AutoMorph.",
                     "backend_warning": None,
                     "en": en,
                     "mask": mask,
@@ -563,10 +591,11 @@ class StrokeApp(QMainWindow):
                 }
 
             return {
-                "backend_requested": "automorph",
+                "backend_requested": backend_requested,
+                "backend_expected": backend_expected,
                 "backend_used": "classical",
                 "backend_label": "Classical Frangi (fallback)",
-                "backend_note": "AutoMorph không sẵn sàng nên đã tự động fallback về Classical.",
+                "backend_note": backend_note_suffix or "AutoMorph không sẵn sàng nên đã tự động fallback về Classical.",
                 "backend_warning": self._deep_backend_error,
                 "en": None,
                 "mask": None,
@@ -578,10 +607,11 @@ class StrokeApp(QMainWindow):
 
         en, mask, skel, img_no_bg, fov_mask, pipe_details = riched_image.get_enhanced_vessels(img_disp, return_details=True)
         return {
-            "backend_requested": "classical",
+            "backend_requested": backend_requested,
+            "backend_expected": backend_expected,
             "backend_used": "classical",
             "backend_label": "Classical Frangi",
-            "backend_note": "Đang dùng pipeline segmentation cổ điển hiện tại.",
+            "backend_note": backend_note_suffix or "Đang dùng pipeline segmentation cổ điển hiện tại.",
             "backend_warning": None,
             "en": en,
             "mask": mask,

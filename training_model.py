@@ -28,8 +28,16 @@ import feature_extract
 import input_data
 import riched_image
 import av_classifier
+import model_metadata
 
 REPORTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
+
+FAST_RF_PARAMS = {
+    "n_estimators": 150,
+    "max_depth": 4,
+    "min_samples_leaf": 4,
+    "class_weight": "balanced",
+}
 
 
 def _metrics_at_threshold(y_true, y_prob, threshold):
@@ -161,7 +169,8 @@ def _collect_features(dataset_path, av_model=None, backend="classical", deep_mod
 
 
 def train_optimized(dataset_path, backend="classical", deep_n_models=3, device="cpu",
-                     od_n_models=3, av_n_models=2):
+                     od_n_models=3, av_n_models=2, search_mode="fast",
+                     retrain_av=False):
     os.makedirs(MODEL_DIR, exist_ok=True)
     os.makedirs(REPORTS_DIR, exist_ok=True)
 
@@ -169,9 +178,17 @@ def train_optimized(dataset_path, backend="classical", deep_n_models=3, device="
     print("  VESSEL-EYE Training Pipeline")
     print("=" * 50)
 
-    # Step 0: Pre-train A/V Classifier
-    print("[0/4] Pre-training A/V SVM Classifier ...")
-    av_mdl = av_classifier.train_av_classifier(dataset_path)
+    # Step 0: Load or pre-train A/V Classifier
+    if retrain_av:
+        print("[0/4] Re-training A/V SVM Classifier ...")
+        av_mdl = av_classifier.train_av_classifier(dataset_path)
+    else:
+        av_mdl = av_classifier.load_av_classifier()
+        if av_mdl is not None:
+            print("[0/4] Reusing existing A/V SVM Classifier ...")
+        else:
+            print("[0/4] Training A/V SVM Classifier (no cached model found) ...")
+            av_mdl = av_classifier.train_av_classifier(dataset_path)
 
     deep_models = None
     od_models = None
@@ -219,43 +236,60 @@ def train_optimized(dataset_path, backend="classical", deep_n_models=3, device="
 
     print(f"  Total: {n_samples} (label 0: {n_neg}, label 1: {n_pos})")
 
-    # Step 2: 5-fold Stratified Cross-Validation + hyperparameter search
-    print("[2/4] 5-fold Stratified Cross-Validation + hyperparameter search ...")
-
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-    base_rf = RandomForestClassifier(random_state=42, n_jobs=-1)
-    param_grid = {
-        "n_estimators": [150, 250],
-        "max_depth": [4, 6, 8],
-        "min_samples_leaf": [1, 2, 4],
-        "class_weight": ["balanced", {0: 1.0, 1: 2.0}, {0: 1.0, 1: 3.0}],
-    }
+    # Step 2: Parameter selection
     recall_focused_scorer = make_scorer(fbeta_score, beta=2, zero_division=0)
-    grid = GridSearchCV(
-        estimator=base_rf,
-        param_grid=param_grid,
-        cv=skf,
-        scoring=recall_focused_scorer,
-        n_jobs=-1,
-        refit=True,
-        verbose=0,
-    )
-    grid.fit(X, y)
-    best_params = grid.best_params_
-    print(f"  Best hyperparameters: {best_params}")
+    cv_summary = None
+    if search_mode == "full-search":
+        print("[2/4] 5-fold Stratified Cross-Validation + hyperparameter search ...")
 
-    cv_model = grid.best_estimator_
-    cv_acc = cross_val_score(cv_model, X, y, cv=skf, scoring="accuracy")
-    cv_f1  = cross_val_score(cv_model, X, y, cv=skf, scoring="f1")
-    cv_f2  = cross_val_score(cv_model, X, y, cv=skf, scoring=recall_focused_scorer)
-    cv_rec = cross_val_score(cv_model, X, y, cv=skf, scoring="recall")
-    cv_auc = cross_val_score(cv_model, X, y, cv=skf, scoring="roc_auc")
+        skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+        base_rf = RandomForestClassifier(random_state=42, n_jobs=-1)
+        param_grid = {
+            "n_estimators": [150, 250],
+            "max_depth": [4, 6, 8],
+            "min_samples_leaf": [1, 2, 4],
+            "class_weight": ["balanced", {0: 1.0, 1: 2.0}, {0: 1.0, 1: 3.0}],
+        }
+        grid = GridSearchCV(
+            estimator=base_rf,
+            param_grid=param_grid,
+            cv=skf,
+            scoring=recall_focused_scorer,
+            n_jobs=-1,
+            refit=True,
+            verbose=0,
+        )
+        grid.fit(X, y)
+        best_params = grid.best_params_
+        print(f"  Best hyperparameters: {best_params}")
 
-    print(f"  CV Accuracy: {cv_acc.mean():.4f} +/- {cv_acc.std():.4f}")
-    print(f"  CV F1:       {cv_f1.mean():.4f} +/- {cv_f1.std():.4f}")
-    print(f"  CV F2:       {cv_f2.mean():.4f} +/- {cv_f2.std():.4f}")
-    print(f"  CV Recall:   {cv_rec.mean():.4f} +/- {cv_rec.std():.4f}")
-    print(f"  CV AUC-ROC:  {cv_auc.mean():.4f} +/- {cv_auc.std():.4f}")
+        cv_model = grid.best_estimator_
+        cv_acc = cross_val_score(cv_model, X, y, cv=skf, scoring="accuracy")
+        cv_f1 = cross_val_score(cv_model, X, y, cv=skf, scoring="f1")
+        cv_f2 = cross_val_score(cv_model, X, y, cv=skf, scoring=recall_focused_scorer)
+        cv_rec = cross_val_score(cv_model, X, y, cv=skf, scoring="recall")
+        cv_auc = cross_val_score(cv_model, X, y, cv=skf, scoring="roc_auc")
+        cv_summary = {
+            "accuracy_mean": round(float(cv_acc.mean()), 4),
+            "accuracy_std": round(float(cv_acc.std()), 4),
+            "f1_mean": round(float(cv_f1.mean()), 4),
+            "f1_std": round(float(cv_f1.std()), 4),
+            "f2_mean": round(float(cv_f2.mean()), 4),
+            "f2_std": round(float(cv_f2.std()), 4),
+            "recall_mean": round(float(cv_rec.mean()), 4),
+            "recall_std": round(float(cv_rec.std()), 4),
+            "auc_roc_mean": round(float(cv_auc.mean()), 4),
+            "auc_roc_std": round(float(cv_auc.std()), 4),
+        }
+        print(f"  CV Accuracy: {cv_acc.mean():.4f} +/- {cv_acc.std():.4f}")
+        print(f"  CV F1:       {cv_f1.mean():.4f} +/- {cv_f1.std():.4f}")
+        print(f"  CV F2:       {cv_f2.mean():.4f} +/- {cv_f2.std():.4f}")
+        print(f"  CV Recall:   {cv_rec.mean():.4f} +/- {cv_rec.std():.4f}")
+        print(f"  CV AUC-ROC:  {cv_auc.mean():.4f} +/- {cv_auc.std():.4f}")
+    else:
+        print("[2/4] Fast mode: using fixed RandomForest settings (single-pass, no CV/grid-search) ...")
+        best_params = dict(FAST_RF_PARAMS)
+        print(f"  Using hyperparameters: {best_params}")
 
     # Step 3: 80/20 Hold-out
     print("[3/4] Hold-out evaluation (80/20) ...")
@@ -318,27 +352,30 @@ def train_optimized(dataset_path, backend="classical", deep_n_models=3, device="
     joblib.dump(full_model, MODEL_PATH)
     print(f"  Model saved -> {MODEL_PATH}")
 
+    model_metadata.save_model_metadata({
+        "generated_at": datetime.now().isoformat(),
+        "model_path": MODEL_PATH,
+        "backend": backend,
+        "risk_decision_threshold": float(RISK_DECISION_THRESHOLD),
+        "search_mode": search_mode,
+        "dataset_path": dataset_path,
+        "total_samples": int(n_samples),
+        "label_0_normal": int(n_neg),
+        "label_1_high_risk": int(n_pos),
+        "best_hyperparameters": best_params,
+    })
+
     metrics = {
         "generated_at": datetime.now().isoformat(),
         "dataset": {
             "path": dataset_path,
             "backend": backend,
+            "search_mode": search_mode,
             "total_samples": n_samples,
             "label_0_normal": n_neg,
             "label_1_high_risk": n_pos,
         },
-        "cross_validation_5fold": {
-            "accuracy_mean": round(float(cv_acc.mean()), 4),
-            "accuracy_std":  round(float(cv_acc.std()),  4),
-            "f1_mean":       round(float(cv_f1.mean()),  4),
-            "f1_std":        round(float(cv_f1.std()),   4),
-            "f2_mean":       round(float(cv_f2.mean()),  4),
-            "f2_std":        round(float(cv_f2.std()),   4),
-            "recall_mean":   round(float(cv_rec.mean()), 4),
-            "recall_std":    round(float(cv_rec.std()),  4),
-            "auc_roc_mean":  round(float(cv_auc.mean()), 4),
-            "auc_roc_std":   round(float(cv_auc.std()),  4),
-        },
+        "cross_validation_5fold": cv_summary,
         "holdout_80_20": {
             "accuracy":           round(holdout_acc, 4),
             "f1_score":           round(holdout_f1,  4),
@@ -369,12 +406,16 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", default="dataset", help="Dataset root containing 0/ and 1/")
     parser.add_argument("--backend", choices=["classical", "automorph"], default="classical",
                         help="Vessel segmentation backend used before feature extraction")
+    parser.add_argument("--search-mode", choices=["fast", "full-search"], default="fast",
+                        help="Training mode: fast runs one pass with fixed RF params; full-search keeps the expensive CV+grid search")
     parser.add_argument("--n_models", type=int, default=3,
                         help="Number of AutoMorph vessel ensemble models when backend=automorph")
     parser.add_argument("--od_n_models", type=int, default=3,
                         help="Number of OD wnet ensemble models (AutoMorph mode only)")
     parser.add_argument("--av_n_models", type=int, default=2,
                         help="Number of A/V Generator ensemble triplets (AutoMorph mode only)")
+    parser.add_argument("--retrain-av", action="store_true",
+                        help="Force re-training the cached A/V SVM classifier instead of reusing models/av_classifier.pkl")
     parser.add_argument("--device", default="cpu", help="Torch device for AutoMorph backend")
     args = parser.parse_args()
     train_optimized(
@@ -384,4 +425,6 @@ if __name__ == "__main__":
         device=args.device,
         od_n_models=args.od_n_models,
         av_n_models=args.av_n_models,
+        search_mode=args.search_mode,
+        retrain_av=args.retrain_av,
     )

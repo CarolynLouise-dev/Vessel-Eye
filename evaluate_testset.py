@@ -18,6 +18,22 @@ import feature_extract
 import input_data
 import riched_image
 from constant import IMG_SIZE, RISK_DECISION_THRESHOLD
+import model_metadata
+
+
+def _get_vessel_bundle(img, backend, deep_models=None):
+    if backend == "automorph":
+        import deep_backend
+
+        if not deep_models:
+            raise RuntimeError("Model metadata expects AutoMorph backend, but deep models are unavailable.")
+        return deep_backend.get_enhanced_vessels_deep(
+            img,
+            models=deep_models,
+            device="cpu",
+            return_details=True,
+        )
+    return riched_image.get_enhanced_vessels(img, return_details=True)
 
 
 def _metrics_at_threshold(y, proba, threshold):
@@ -45,6 +61,14 @@ def _build_threshold_scan(y, proba):
 def main():
     risk = joblib.load("models/stroke_risk_model.pkl")
     av = av_classifier.load_av_classifier()
+    trained_backend = model_metadata.get_model_backend(default="classical")
+    deploy_threshold = model_metadata.get_model_threshold(default=RISK_DECISION_THRESHOLD)
+    deep_models = None
+    if trained_backend == "automorph":
+        import deep_backend
+        deep_models = deep_backend.load_vessel_seg_ensemble(n_models=3, device="cpu")
+        if not deep_models:
+            raise RuntimeError("Saved model expects AutoMorph backend, but deep models are unavailable.")
 
     X, y = [], []
     for label in [0, 1]:
@@ -60,7 +84,11 @@ def main():
 
             try:
                 img = input_data.standardize_fundus_image(img, IMG_SIZE)
-                en, mask, skel, _img_no_bg, fov, pipe_details = riched_image.get_enhanced_vessels(img, return_details=True)
+                en, mask, skel, _img_no_bg, fov, pipe_details = _get_vessel_bundle(
+                    img,
+                    trained_backend,
+                    deep_models=deep_models,
+                )
                 feats, _, _details = feature_extract.extract_features(
                     mask,
                     en,
@@ -80,11 +108,12 @@ def main():
     y = np.array(y, dtype=int)
 
     proba = risk.predict_proba(X)[:, 1]
-    metrics_at_deploy = _metrics_at_threshold(y, proba, RISK_DECISION_THRESHOLD)
+    metrics_at_deploy = _metrics_at_threshold(y, proba, deploy_threshold)
     threshold_scan, best_threshold = _build_threshold_scan(y, proba)
 
     metrics = {
-        "threshold": float(RISK_DECISION_THRESHOLD),
+        "threshold": float(deploy_threshold),
+        "backend": trained_backend,
         "n_samples": int(len(y)),
         "accuracy": metrics_at_deploy["accuracy"],
         "precision": metrics_at_deploy["precision"],
