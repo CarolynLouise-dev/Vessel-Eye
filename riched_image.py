@@ -6,6 +6,12 @@ from skimage.morphology import skeletonize, remove_small_objects, disk, closing,
     white_tophat
 from skimage.measure import label, regionprops
 
+try:
+    from skimage.filters import apply_hysteresis_threshold
+    _HYSTERESIS_AVAILABLE = True
+except ImportError:
+    _HYSTERESIS_AVAILABLE = False
+
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 

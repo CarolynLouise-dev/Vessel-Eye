@@ -3,7 +3,8 @@ import os
 # Đường dẫn hệ thống
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(BASE_DIR, "models")
-MODEL_PATH = os.path.join(MODEL_DIR, "stroke_risk_model.pkl")
+MODEL_PATH     = os.path.join(MODEL_DIR, "stroke_risk_model.pkl")
+AV_MODEL_PATH  = os.path.join(MODEL_DIR, "av_classifier.pkl")   # Phase 3
 
 # Tạo thư mục model nếu chưa có
 if not os.path.exists(MODEL_DIR):

@@ -1,0 +1,26 @@
+# Virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Trained models (large binary files)
+models/*.pkl
+models/*.joblib
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Debug output
+debug_output/
+
+# Reports (generated — tracked separately)
+# reports/*.json

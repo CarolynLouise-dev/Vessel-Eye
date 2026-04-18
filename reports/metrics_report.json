@@ -1,0 +1,95 @@
+{
+  "generated_at": "2026-04-18T12:48:51.029184",
+  "dataset": {
+    "path": "dataset",
+    "backend": "automorph",
+    "total_samples": 455,
+    "label_0_normal": 356,
+    "label_1_high_risk": 99
+  },
+  "cross_validation_5fold": {
+    "accuracy_mean": 0.8549,
+    "accuracy_std": 0.0377,
+    "f1_mean": 0.6548,
+    "f1_std": 0.0689,
+    "f2_mean": 0.6356,
+    "f2_std": 0.0729,
+    "recall_mean": 0.6268,
+    "recall_std": 0.0905,
+    "auc_roc_mean": 0.8488,
+    "auc_roc_std": 0.05
+  },
+  "holdout_80_20": {
+    "accuracy": 0.8571,
+    "f1_score": 0.6486,
+    "auc_roc": 0.8563,
+    "sensitivity_recall": 0.6,
+    "specificity": 0.9296,
+    "confusion_matrix": [
+      [
+        66,
+        5
+      ],
+      [
+        8,
+        12
+      ]
+    ]
+  },
+  "deploy_threshold_metrics": {
+    "threshold": 0.35,
+    "accuracy": 0.8352,
+    "precision": 0.6087,
+    "recall_sensitivity": 0.7,
+    "specificity": 0.8732,
+    "f1_score": 0.6512,
+    "f2_score": 0.6796,
+    "confusion_matrix": [
+      [
+        62,
+        9
+      ],
+      [
+        6,
+        14
+      ]
+    ]
+  },
+  "best_holdout_threshold_metrics": {
+    "threshold": 0.21,
+    "accuracy": 0.5495,
+    "precision": 0.3279,
+    "recall_sensitivity": 1.0,
+    "specificity": 0.4225,
+    "f1_score": 0.4938,
+    "f2_score": 0.7092,
+    "confusion_matrix": [
+      [
+        30,
+        41
+      ],
+      [
+        0,
+        20
+      ]
+    ]
+  },
+  "feature_importances": {
+    "AVR": 0.0984,
+    "CRAE": 0.053,
+    "CRVE": 0.0547,
+    "Tortuosity": 0.0449,
+    "StdTortuosity": 0.0341,
+    "VesselDensity": 0.1322,
+    "FractalDim": 0.1527,
+    "Discontinuity": 0.0121,
+    "EndpointGapScore": 0.0445,
+    "WhiteningScore": 0.3736
+  },
+  "best_hyperparameters": {
+    "class_weight": "balanced",
+    "max_depth": 4,
+    "min_samples_leaf": 4,
+    "n_estimators": 150
+  }
+}

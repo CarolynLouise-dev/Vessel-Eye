@@ -1,0 +1,22 @@
+[project]
+name = "vessel-eye"
+version = "0.1.0"
+description = "RETINA-SCAN: Stroke Risk Detection from Retinal Fundus Images"
+requires-python = ">=3.10"
+dependencies = [
+    "pyqt6",
+    "opencv-python",
+    "numpy",
+    "scikit-image",
+    "scikit-learn",
+    "matplotlib",
+    "pandas",
+    "joblib",
+    "skan",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+]

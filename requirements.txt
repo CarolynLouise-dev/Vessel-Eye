@@ -1,8 +1,9 @@
-PyQt6
-opencv-python
+PyQt6==6.5.3
+opencv-python-headless
 numpy
 scikit-image
 scikit-learn
 matplotlib
 pandas
 joblib
+torchvision

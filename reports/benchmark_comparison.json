@@ -1,0 +1,46 @@
+{
+  "threshold": 0.35,
+  "n_models_deep": 3,
+  "classical": {
+    "n_images": 88,
+    "accuracy": 0.6590909090909091,
+    "recall_sensitivity": 0.6136363636363636,
+    "precision": 0.675,
+    "f1": 0.6428571428571429,
+    "auc": 0.7422520661157026,
+    "mean_time_s": 2.070070547727234,
+    "feature_means": {
+      "AVR": 3.0279674867497373,
+      "CRAE": 8.764109875938084,
+      "CRVE": 5.951998566864967,
+      "Tortuosity": 1.1142442438566378,
+      "StdTortuosity": 0.08085509710372646,
+      "VesselDensity": 0.27458377181179666,
+      "FractalDim": 1.2203699077304202,
+      "Discontinuity": 0.0057837357381893975,
+      "EndpointGapScore": 0.00885488741202026,
+      "WhiteningScore": 0.002507163144666831
+    }
+  },
+  "deep": {
+    "n_images": 88,
+    "accuracy": 0.6477272727272727,
+    "recall_sensitivity": 0.7272727272727273,
+    "precision": 0.6274509803921569,
+    "f1": 0.6736842105263158,
+    "auc": 0.7458677685950413,
+    "mean_time_s": 5.409359645454391,
+    "feature_means": {
+      "AVR": 2.8765671783968583,
+      "CRAE": 9.008180424373608,
+      "CRVE": 6.476426887506434,
+      "Tortuosity": 1.086881563717239,
+      "StdTortuosity": 0.0389255847123659,
+      "VesselDensity": 0.22471278861158614,
+      "FractalDim": 1.1809583400046422,
+      "Discontinuity": 0.0018651340576742502,
+      "EndpointGapScore": 0.0011601869605509906,
+      "WhiteningScore": 0.0034388026873014106
+    }
+  }
+}
