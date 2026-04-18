@@ -1,8 +1,10 @@
 import warnings
+from typing import cast
 
 import cv2
 import numpy as np
 from skimage.measure import label, regionprops
+from skimage.morphology import skeletonize
 
 import anatomy
 import quality_assessment
@@ -100,11 +102,104 @@ def _compute_endpoint_map(skeleton_bin, fov_mask=None):
     return endpoint_map * 255
 
 
-def get_discontinuity_map(skeleton_bin, vessel_mask, fov_mask=None):
-    """
-    Chuẩn hóa gap map giữa tầng Trích xuất và Draw.
-    Sử dụng MORPH_CLOSE diện rộng, lọc endpoint và noise.
-    """
+def _endpoint_candidates(skeleton_bin, fov_mask=None):
+    if skeleton_bin is None:
+        return []
+
+    sk = (skeleton_bin > 0).astype(np.uint8)
+    if np.count_nonzero(sk) == 0:
+        return []
+
+    endpoint_map = _compute_endpoint_map(skeleton_bin, fov_mask)
+    _, comp_labels, comp_stats, _ = cv2.connectedComponentsWithStats(sk, connectivity=8)
+    ys, xs = np.where(endpoint_map > 0)
+    h, w = sk.shape
+    candidates = []
+
+    for y, x in zip(ys, xs):
+        y0, y1 = max(0, y - 1), min(h, y + 2)
+        x0, x1 = max(0, x - 1), min(w, x + 2)
+        patch = sk[y0:y1, x0:x1].copy()
+        c_y, c_x = y - y0, x - x0
+        patch[c_y, c_x] = 0
+        neighbors = np.argwhere(patch > 0)
+        if len(neighbors) == 0:
+            continue
+
+        vec = np.zeros(2, dtype=np.float32)
+        for ny, nx in neighbors:
+            vec += np.array([ny - c_y, nx - c_x], dtype=np.float32)
+        norm = float(np.hypot(vec[0], vec[1]))
+        if norm < 1e-6:
+            continue
+
+        candidates.append({
+            "y": int(y),
+            "x": int(x),
+            "dir": (float(vec[0] / norm), float(vec[1] / norm)),
+            "component": int(comp_labels[y, x]),
+            "component_size": int(comp_stats[comp_labels[y, x], cv2.CC_STAT_AREA]),
+            "border_dist": int(min(y, x, h - 1 - y, w - 1 - x)),
+        })
+
+    return candidates
+
+
+def _bezier_bridge_points(p0, p1, dir0, dir1, steps=28):
+    p0a = np.array([float(p0[0]), float(p0[1])], dtype=np.float32)
+    p1a = np.array([float(p1[0]), float(p1[1])], dtype=np.float32)
+    cont0 = np.array([-float(dir0[0]), -float(dir0[1])], dtype=np.float32)
+    cont1 = np.array([-float(dir1[0]), -float(dir1[1])], dtype=np.float32)
+    gap = float(np.linalg.norm(p1a - p0a))
+    alpha = float(np.clip(gap * 0.35, 4.0, 24.0))
+    c0 = p0a + cont0 * alpha
+    c1 = p1a + cont1 * alpha
+
+    points = []
+    for t in np.linspace(0.0, 1.0, steps):
+        omt = 1.0 - t
+        pt = (
+            (omt ** 3) * p0a
+            + 3.0 * (omt ** 2) * t * c0
+            + 3.0 * omt * (t ** 2) * c1
+            + (t ** 3) * p1a
+        )
+        points.append((int(round(pt[0])), int(round(pt[1]))))
+
+    dedup = []
+    for pt in points:
+        if not dedup or pt != dedup[-1]:
+            dedup.append(pt)
+    return dedup
+
+
+def _render_curve_mask(shape, points, thickness=1):
+    mask = np.zeros(shape, dtype=np.uint8)
+    if len(points) < 2:
+        return mask
+    for idx in range(len(points) - 1):
+        y1, x1 = points[idx]
+        y2, x2 = points[idx + 1]
+        cv2.line(mask, (x1, y1), (x2, y2), 255, thickness, cv2.LINE_AA)
+    return mask
+
+
+def _mask_to_skeleton(mask_u8, fov_mask=None, min_area=6):
+    if mask_u8 is None:
+        return None
+    sk = (skeletonize(mask_u8 > 0).astype(np.uint8)) * 255
+    if fov_mask is not None:
+        sk = cv2.bitwise_and(sk, sk, mask=fov_mask)
+
+    n_s, lab_s, stats_s, _ = cv2.connectedComponentsWithStats((sk > 0).astype(np.uint8), connectivity=8)
+    sk_clean = np.zeros_like(sk)
+    for i in range(1, n_s):
+        if stats_s[i, cv2.CC_STAT_AREA] >= min_area:
+            sk_clean[lab_s == i] = 255
+    return sk_clean
+
+
+def _morphology_gap_map(skeleton_bin, vessel_mask, fov_mask=None):
     if skeleton_bin is None or vessel_mask is None:
         return np.zeros_like(vessel_mask, dtype=np.uint8), 0.0
 
@@ -155,8 +250,220 @@ def get_discontinuity_map(skeleton_bin, vessel_mask, fov_mask=None):
     return gap_map, score
 
 
-def _weighted_discontinuity_score(skeleton_bin, vessel_mask, en_green, zone_mask=None):
-    gap_map, _ = get_discontinuity_map(skeleton_bin, vessel_mask, zone_mask)
+def _hidden_gap_bridge_map(raw_vessel_mask, vessel_mask, fov_mask=None):
+    if raw_vessel_mask is None or vessel_mask is None:
+        return np.zeros_like(vessel_mask, dtype=np.uint8), 0.0
+
+    if np.shape(raw_vessel_mask) != np.shape(vessel_mask):
+        return np.zeros_like(vessel_mask, dtype=np.uint8), 0.0
+
+    raw_u8 = (raw_vessel_mask > 0).astype(np.uint8) * 255
+    final_u8 = (vessel_mask > 0).astype(np.uint8) * 255
+    bridge = cv2.subtract(final_u8, raw_u8)
+    if fov_mask is not None:
+        bridge = cv2.bitwise_and(bridge, bridge, mask=fov_mask)
+    if np.count_nonzero(bridge) == 0:
+        return np.zeros_like(vessel_mask, dtype=np.uint8), 0.0
+
+    _, raw_labels = cv2.connectedComponents((raw_u8 > 0).astype(np.uint8), connectivity=8)
+    n_lbl, lbl, stats, _ = cv2.connectedComponentsWithStats((bridge > 0).astype(np.uint8), connectivity=8)
+    out = np.zeros_like(bridge)
+    for i in range(1, n_lbl):
+        area = int(stats[i, cv2.CC_STAT_AREA])
+        if area <= 0 or area > 96:
+            continue
+
+        comp = (lbl == i).astype(np.uint8) * 255
+        neigh = cv2.dilate(comp, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)), iterations=1)
+        touching = raw_labels[neigh > 0]
+        touching = touching[touching > 0]
+        if len(np.unique(touching)) < 2:
+            continue
+
+        comp_vis = cv2.dilate(comp, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)), iterations=1)
+        out = cv2.bitwise_or(out, comp_vis)
+
+    score = float(np.count_nonzero(out)) / max(1.0, float(np.count_nonzero(final_u8)))
+    return out, score
+
+
+def _graph_gap_pairs(skeleton_bin, vessel_mask, fov_mask=None, max_gap_px=44):
+    if skeleton_bin is None or vessel_mask is None:
+        return [], np.zeros_like(vessel_mask, dtype=np.uint8)
+
+    endpoints = _endpoint_candidates(skeleton_bin, fov_mask)
+    if len(endpoints) < 2:
+        return [], np.zeros_like(vessel_mask, dtype=np.uint8)
+
+    if fov_mask is None:
+        fov_mask = np.ones_like(vessel_mask, dtype=np.uint8) * 255
+
+    vessel_bool = vessel_mask > 0
+    corridor = cv2.dilate(
+        vessel_mask.astype(np.uint8),
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (19, 19)),
+        iterations=1,
+    ) > 0
+
+    candidate_edges = []
+    for i in range(len(endpoints)):
+        for j in range(i + 1, len(endpoints)):
+            ep1 = endpoints[i]
+            ep2 = endpoints[j]
+            if ep1["component"] == ep2["component"]:
+                continue
+            if min(ep1["border_dist"], ep2["border_dist"]) < 4:
+                continue
+            if min(ep1["component_size"], ep2["component_size"]) < 6:
+                continue
+            if (ep1["component_size"] + ep2["component_size"]) < 18:
+                continue
+
+            dy = float(ep2["y"] - ep1["y"])
+            dx = float(ep2["x"] - ep1["x"])
+            dist = float(np.hypot(dy, dx))
+            if dist < 6.0 or dist > float(max_gap_px):
+                continue
+
+            gap_dir = (dy / dist, dx / dist)
+            cont1 = (-ep1["dir"][0], -ep1["dir"][1])
+            cont2 = (-ep2["dir"][0], -ep2["dir"][1])
+            align1 = float(cont1[0] * gap_dir[0] + cont1[1] * gap_dir[1])
+            align2 = float(cont2[0] * -gap_dir[0] + cont2[1] * -gap_dir[1])
+            if min(align1, align2) < 0.20 or (align1 + align2) < 0.65:
+                continue
+
+            curve_points = _bezier_bridge_points(
+                (ep1["y"], ep1["x"]),
+                (ep2["y"], ep2["x"]),
+                ep1["dir"],
+                ep2["dir"],
+            )
+            if len(curve_points) < 4:
+                continue
+
+            inside = 0
+            overlap_existing = 0
+            corridor_hits = 0
+            interior_points = curve_points[1:-1] if len(curve_points) > 2 else curve_points
+            for py, px in interior_points:
+                if 0 <= py < fov_mask.shape[0] and 0 <= px < fov_mask.shape[1] and fov_mask[py, px] > 0:
+                    inside += 1
+                    if vessel_bool[py, px]:
+                        overlap_existing += 1
+                    if corridor[py, px]:
+                        corridor_hits += 1
+
+            if len(interior_points) == 0:
+                continue
+
+            inside_ratio = inside / float(len(interior_points))
+            overlap_ratio = overlap_existing / float(len(interior_points))
+            corridor_ratio = corridor_hits / float(len(interior_points))
+            if inside_ratio < 0.98 or overlap_ratio > 0.35 or corridor_ratio < 0.40:
+                continue
+
+            score = (
+                0.45 * ((align1 + align2) / 2.0)
+                + 0.25 * (1.0 - dist / float(max_gap_px))
+                + 0.20 * corridor_ratio
+                + 0.10 * (1.0 - overlap_ratio)
+            )
+            if score < 0.72:
+                continue
+
+            candidate_edges.append({
+                "i": i,
+                "j": j,
+                "score": float(score),
+                "dist": float(dist),
+                "points": curve_points,
+                "radius": max(8, min(24, int(round(dist * 0.35)))),
+                "center": (
+                    int(round((ep1["x"] + ep2["x"]) / 2.0)),
+                    int(round((ep1["y"] + ep2["y"]) / 2.0)),
+                ),
+            })
+
+    best_for_endpoint = {}
+    for idx, edge in enumerate(candidate_edges):
+        for ep_idx in (edge["i"], edge["j"]):
+            prev = best_for_endpoint.get(ep_idx)
+            if prev is None:
+                best_for_endpoint[ep_idx] = idx
+                continue
+            prev_edge = candidate_edges[prev]
+            prev_key = (float(prev_edge["score"]), -float(prev_edge["dist"]))
+            curr_key = (float(edge["score"]), -float(edge["dist"]))
+            if curr_key > prev_key:
+                best_for_endpoint[ep_idx] = idx
+
+    reciprocal_edges = []
+    for idx, edge in enumerate(candidate_edges):
+        if best_for_endpoint.get(edge["i"]) == idx and best_for_endpoint.get(edge["j"]) == idx:
+            reciprocal_edges.append(edge)
+
+    selected = []
+    used = set()
+    gap_mask = np.zeros_like(vessel_mask, dtype=np.uint8)
+    for edge in sorted(reciprocal_edges, key=lambda item: (-item["score"], item["dist"])):
+        if edge["i"] in used or edge["j"] in used:
+            continue
+        used.add(edge["i"])
+        used.add(edge["j"])
+        selected.append(edge)
+        thickness = 1 if edge["dist"] < 26 else 2
+        gap_mask = cv2.bitwise_or(gap_mask, _render_curve_mask(vessel_mask.shape, edge["points"], thickness=thickness))
+        if len(selected) >= 36:
+            break
+
+    return selected, gap_mask
+
+
+def get_discontinuity_map(skeleton_bin, vessel_mask, fov_mask=None, raw_vessel_mask=None):
+    """
+    Phát hiện đứt đoạn ưu tiên theo ghép cặp endpoint dạng graph,
+    có fallback về morphology khi graph không tìm được cặp hợp lệ.
+    """
+    if skeleton_bin is None or vessel_mask is None:
+        return np.zeros_like(vessel_mask, dtype=np.uint8), 0.0
+
+    candidate_views = []
+    if raw_vessel_mask is not None and np.shape(raw_vessel_mask) == np.shape(vessel_mask) and np.count_nonzero(raw_vessel_mask) > 0:
+        raw_skeleton = _mask_to_skeleton(raw_vessel_mask, fov_mask=fov_mask, min_area=5)
+        if raw_skeleton is not None and np.count_nonzero(raw_skeleton) > 0:
+            candidate_views.append((raw_skeleton, raw_vessel_mask))
+    candidate_views.append((skeleton_bin, vessel_mask))
+
+    hidden_gap, hidden_score = _hidden_gap_bridge_map(raw_vessel_mask, vessel_mask, fov_mask=fov_mask)
+
+    combined_gap = np.zeros_like(vessel_mask, dtype=np.uint8)
+    total_score = float(hidden_score)
+    used_graph = False
+    if np.count_nonzero(hidden_gap) > 0:
+        combined_gap = cv2.bitwise_or(combined_gap, hidden_gap)
+    for source_skeleton, source_mask in candidate_views:
+        selected_pairs, graph_gap = _graph_gap_pairs(source_skeleton, source_mask, fov_mask)
+        if np.count_nonzero(graph_gap) > 0:
+            used_graph = True
+            combined_gap = cv2.bitwise_or(combined_gap, graph_gap)
+            sk = (source_skeleton > 0).astype(np.uint8)
+            total_score += float(sum(pair["score"] * pair["dist"] for pair in selected_pairs)) / max(1.0, float(np.count_nonzero(sk)))
+
+    if used_graph or np.count_nonzero(hidden_gap) > 0:
+        return combined_gap, float(total_score)
+
+    morph_gap = np.zeros_like(vessel_mask, dtype=np.uint8)
+    morph_score = 0.0
+    for source_skeleton, source_mask in candidate_views:
+        gap_part, score_part = _morphology_gap_map(source_skeleton, source_mask, fov_mask)
+        morph_gap = cv2.bitwise_or(morph_gap, gap_part)
+        morph_score += float(score_part)
+    return morph_gap, morph_score
+
+
+def _weighted_discontinuity_score(skeleton_bin, vessel_mask, en_green, zone_mask=None, raw_vessel_mask=None):
+    gap_map, _ = get_discontinuity_map(skeleton_bin, vessel_mask, zone_mask, raw_vessel_mask=raw_vessel_mask)
     if np.count_nonzero(gap_map) == 0:
         return 0.0
 
@@ -185,7 +492,16 @@ def _weighted_discontinuity_score(skeleton_bin, vessel_mask, en_green, zone_mask
     return float(weighted / denom)
 
 
-def _endpoint_gap_score(skeleton_bin, zone_mask=None, max_gap_px=40):
+def _endpoint_gap_score(skeleton_bin, zone_mask=None, max_gap_px=40, raw_vessel_mask=None):
+    if raw_vessel_mask is not None and zone_mask is not None and np.shape(raw_vessel_mask) == np.shape(zone_mask):
+        raw_skeleton = _mask_to_skeleton(raw_vessel_mask, fov_mask=zone_mask, min_area=5)
+        if raw_skeleton is not None and np.count_nonzero(raw_skeleton) > 0:
+            skeleton_bin = raw_skeleton
+    elif raw_vessel_mask is not None and skeleton_bin is not None and np.shape(raw_vessel_mask) == np.shape(skeleton_bin):
+        raw_skeleton = _mask_to_skeleton(raw_vessel_mask, fov_mask=zone_mask, min_area=5)
+        if raw_skeleton is not None and np.count_nonzero(raw_skeleton) > 0:
+            skeleton_bin = raw_skeleton
+
     endpoint_map = _compute_endpoint_map(skeleton_bin, zone_mask)
     ys, xs = np.where(endpoint_map > 0)
     if len(ys) < 2:
@@ -318,7 +634,8 @@ def _skeleton_features(skeleton_bin, binary_mask, en_green, zone_mask=None, img_
                 chord_len = arc_len
 
         try:
-            path_coords = sk.path_coordinates(row.name)
+            path_index = cast(int, row.name)
+            path_coords = sk.path_coordinates(path_index)
             if len(path_coords) < 3:
                 continue
 
@@ -341,17 +658,25 @@ def _skeleton_features(skeleton_bin, binary_mask, en_green, zone_mask=None, img_
                 continue
 
             if _use_deep_av:
-                # Pixel-level lookup from deep A/V segmentation
-                if 0 <= my < artery_mask.shape[0] and 0 <= mx < artery_mask.shape[1]:
-                    if artery_mask[my, mx] > 0:
-                        is_artery = True
-                    elif vein_mask[my, mx] > 0:
-                        is_artery = False
-                    else:
-                        is_artery = float(en_green[my, mx]) > brightness_threshold
+                assert artery_mask is not None and vein_mask is not None
+                art_votes = 0
+                vein_votes = 0
+                for py, px in path_coords:
+                    iy, ix = int(py), int(px)
+                    if 0 <= iy < artery_mask.shape[0] and 0 <= ix < artery_mask.shape[1]:
+                        if artery_mask[iy, ix] > 0:
+                            art_votes += 1
+                        if vein_mask[iy, ix] > 0:
+                            vein_votes += 1
+
+                if art_votes > vein_votes:
+                    is_artery = True
+                elif vein_votes > art_votes:
+                    is_artery = False
                 else:
                     is_artery = float(en_green[my, mx]) > brightness_threshold
             elif _av_predict is not None:
+                assert img_bgr is not None
                 is_artery = _av_predict(av_model, img_bgr, en_green, binary_mask, path_coords)
             else:
                 avg_int = float(en_green[my, mx])
@@ -368,8 +693,8 @@ def _skeleton_features(skeleton_bin, binary_mask, en_green, zone_mask=None, img_
 
 
 def extract_features(binary_mask, en_green, skeleton=None, img_bgr=None, av_model=None, fov_mask=None, return_details=False,
-                     od_center_override=None, od_radius_override=None,
-                     artery_mask=None, vein_mask=None):
+                     od_center_override=None, od_radius_override=None, od_mask_override=None,
+                     artery_mask=None, vein_mask=None, raw_vessel_mask=None):
     label_img = label(binary_mask)
     regions = regionprops(label_img)
 
@@ -391,13 +716,22 @@ def extract_features(binary_mask, en_green, skeleton=None, img_bgr=None, av_mode
         od_radius = od_radius_override
         od_details = {"confidence": 1.0, "method": "deep_wnet", "source": "od_backend"}
     else:
-        od_center, od_radius, od_details = anatomy.detect_optic_disc(
+        od_result = cast(tuple[tuple[int, int], int, dict], anatomy.detect_optic_disc(
             img_bgr,
             fov_mask=fov_mask,
+            vessel_mask=binary_mask,
             return_details=True,
-        )
+        ))
+        od_center, od_radius, od_details = od_result
     zone_b_mask = anatomy.build_zone_b_mask(binary_mask.shape, od_center, od_radius, inner_scale=1.0, outer_scale=2.0)
-    od_mask = anatomy.build_zone_b_mask(binary_mask.shape, od_center, od_radius, inner_scale=0.0, outer_scale=1.0)
+    if od_mask_override is not None and od_mask_override.shape == binary_mask.shape:
+        od_mask = (od_mask_override > 0).astype(np.uint8) * 255
+    else:
+        od_mask = od_details.get("disc_mask") if isinstance(od_details, dict) else None
+        if od_mask is None or np.shape(od_mask) != np.shape(binary_mask):
+            od_mask = anatomy.build_zone_b_mask(binary_mask.shape, od_center, od_radius, inner_scale=0.0, outer_scale=1.0)
+        else:
+            od_mask = (od_mask > 0).astype(np.uint8) * 255
 
     quality = quality_assessment.assess_image_quality(
         img_bgr,
@@ -432,8 +766,8 @@ def extract_features(binary_mask, en_green, skeleton=None, img_bgr=None, av_mode
     av_ratio = float(crae / max(1e-6, crve))
 
     fractal = _fractal_dimension(((binary_mask > 0) & zone_valid).astype(np.uint8) * 255)
-    discontinuity = _weighted_discontinuity_score(skeleton, binary_mask, en_green, zone_mask=zone_b_mask) if skeleton is not None else 0.0
-    endpoint_gap = _endpoint_gap_score(skeleton, zone_mask=zone_b_mask) if skeleton is not None else 0.0
+    discontinuity = _weighted_discontinuity_score(skeleton, binary_mask, en_green, zone_mask=zone_b_mask, raw_vessel_mask=raw_vessel_mask) if skeleton is not None else 0.0
+    endpoint_gap = _endpoint_gap_score(skeleton, zone_mask=zone_b_mask, raw_vessel_mask=raw_vessel_mask) if skeleton is not None else 0.0
     whitening = _whitening_score(en_green, binary_mask, fov_mask, od_mask=od_mask)
 
     feats = [
@@ -453,6 +787,8 @@ def extract_features(binary_mask, en_green, skeleton=None, img_bgr=None, av_mode
         "od_center": od_center,
         "od_radius": od_radius,
         "od_details": od_details,
+        "od_mask": od_mask,
+        "raw_vessel_mask": raw_vessel_mask,
         "zone_b_mask": zone_b_mask,
         "crae": crae,
         "crve": crve,

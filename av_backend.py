@@ -45,7 +45,7 @@ _SEED_CKPT_DIRS = [
 ]
 
 _TARGET_SIZE = 912   # uniform image size expected by AutoMorph A/V models
-_PTHRESHOLD = 40     # red-channel FOV threshold for z-score normalisation
+_PTHRESHOLD = 0      # original AutoMorph AV preprocessing uses channel-0 > 0
 
 try:
     import torch
@@ -58,9 +58,9 @@ except ImportError:
 # ── Internal helpers ───────────────────────────────────────────────────────────
 
 def _inject_av_scripts_path():
-    """Add M2_Artery_vein/scripts/ to sys.path so model.py is importable directly."""
-    if _AV_SCRIPTS_DIR not in sys.path:
-        sys.path.insert(0, _AV_SCRIPTS_DIR)
+    """Add M2_Artery_vein root to sys.path so scripts.model resolves correctly."""
+    if _AV_DIR not in sys.path:
+        sys.path.insert(0, _AV_DIR)
 
 
 def _load_state(path: str, device: str) -> dict:
@@ -81,14 +81,14 @@ def _load_one_av_triplet(seed_ckpt_dir: str, device: str) -> dict:
     """
     Load (Generator_main, Generator_branch_A, Generator_branch_V) for one seed.
     Generator_main  : n_classes=4 (bg=0, artery=1, vein=2, overlap=3)
-    Generator_branch: n_classes=1 (binary), produces feature maps passed to G_main
+    Generator_branch: n_classes=4 in AutoMorph implementation.
     """
     _inject_av_scripts_path()
-    from model import Generator_main, Generator_branch  # noqa: E402
+    from scripts.model import Generator_main, Generator_branch  # noqa: E402
 
     net_G = Generator_main(input_channels=3, n_filters=32, n_classes=4, bilinear=False)
-    net_GA = Generator_branch(input_channels=3, n_filters=32, n_classes=1, bilinear=False)
-    net_GV = Generator_branch(input_channels=3, n_filters=32, n_classes=1, bilinear=False)
+    net_GA = Generator_branch(input_channels=3, n_filters=32, n_classes=4, bilinear=False)
+    net_GV = Generator_branch(input_channels=3, n_filters=32, n_classes=4, bilinear=False)
 
     net_G.load_state_dict(
         _load_state(os.path.join(seed_ckpt_dir, "CP_best_F1_all.pth"), device)
@@ -109,14 +109,17 @@ def _load_one_av_triplet(seed_ckpt_dir: str, device: str) -> dict:
 
 def _preprocess_av(img_bgr: np.ndarray) -> "torch.Tensor":
     """
-    Tiền xử lý ảnh cổ điển trước khi đưa vào Generator:
-    BGR → RGB → resize 912×912 → z-score normalisation theo FOV pixels → tensor (1,3,912,912).
+    Tiền xử lý theo đúng code gốc của AutoMorph AV OOD test path.
+
+    Lưu ý: upstream code dùng công thức `(img - mean) * std` thay vì chia cho std.
+    Đây nhìn giống bug, nhưng nếu checkpoint được train/infer theo công thức đó thì
+    backend tại đây phải khớp để tránh drift hoàn toàn về background.
     """
     rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     rgb_rs = cv2.resize(rgb, (_TARGET_SIZE, _TARGET_SIZE), interpolation=cv2.INTER_LANCZOS4)
     arr = rgb_rs.astype(np.float32)
 
-    fov = arr[..., 0] > _PTHRESHOLD
+    fov = arr[..., 0] > float(_PTHRESHOLD)
     if fov.sum() > 64:
         mean_v = np.mean(arr[fov], axis=0)
         std_v = np.std(arr[fov], axis=0) + 1e-6
@@ -124,7 +127,7 @@ def _preprocess_av(img_bgr: np.ndarray) -> "torch.Tensor":
         mean_v = arr.mean(axis=(0, 1))
         std_v = arr.std(axis=(0, 1)) + 1e-6
 
-    arr = (arr - mean_v) / std_v
+    arr = (arr - mean_v) * std_v
     return torch.from_numpy(arr.transpose(2, 0, 1)).unsqueeze(0).float()
 
 

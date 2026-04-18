@@ -212,6 +212,7 @@ def get_enhanced_vessels_deep(
     img_bgr: np.ndarray,
     models=None,
     device: str = "cpu",
+    return_details: bool = False,
 ):
     """
     Drop-in replacement for riched_image.get_enhanced_vessels().
@@ -238,7 +239,7 @@ def get_enhanced_vessels_deep(
 
     # Graceful fallback
     if not models:
-        return riched_image.get_enhanced_vessels(img_bgr)
+        return riched_image.get_enhanced_vessels(img_bgr, return_details=return_details)
 
     # Classical pipeline for FOV mask and green enhancement (kept for feature compat.)
     en_green_cls, _, _, img_no_bg, proc_mask = riched_image.get_enhanced_vessels(img_bgr)
@@ -264,5 +265,11 @@ def get_enhanced_vessels_deep(
 
     # Use classical enhanced green (CLAHE-processed) for feature colour features
     en_green = en_green_cls
+
+    if return_details:
+        details = {
+            "raw_vessel_mask": vessel_mask.copy(),
+        }
+        return en_green, vessel_mask, skeleton, img_no_bg, proc_mask, details
 
     return en_green, vessel_mask, skeleton, img_no_bg, proc_mask

@@ -192,7 +192,21 @@ def _adaptive_vessel_threshold(resp_u8, fov_mask):
     return thresh
 
 
-def get_enhanced_vessels(img):
+def _filter_components(mask_u8, proc_mask, min_area):
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask_u8, connectivity=8)
+    cleaned = np.zeros_like(mask_u8)
+    for i in range(1, num_labels):
+        area = stats[i, cv2.CC_STAT_AREA]
+        if area < min_area:
+            continue
+        comp_mask = labels == i
+        overlap = np.count_nonzero(comp_mask & (proc_mask > 0)) / float(max(1, area))
+        if overlap > 0.5:
+            cleaned[comp_mask] = 255
+    return cleaned
+
+
+def get_enhanced_vessels(img, return_details=False):
     # ===== 1. Robust FOV mask =====
     fov_mask = _build_fov_mask(img)
 
@@ -256,25 +270,16 @@ def get_enhanced_vessels(img):
         thresh = _adaptive_vessel_threshold(resp_u8, proc_mask)
         vessel_mask = ((resp_u8 >= thresh) & (proc_mask > 0)).astype(np.uint8) * 255
 
+    min_area = max(40, int(np.count_nonzero(proc_mask) * 0.00006))
+    raw_vessel_mask = _filter_components(vessel_mask, proc_mask, min_area)
+
     # ===== 6. Morphology cleanup =====
     # Chỉ CLOSE để nối đoạn đứt nhỏ nhưng không làm mất mạch mảnh.
     k3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    vessel_mask = cv2.morphologyEx(vessel_mask, cv2.MORPH_CLOSE, k3, iterations=1)
+    vessel_mask = cv2.morphologyEx(raw_vessel_mask, cv2.MORPH_CLOSE, k3, iterations=1)
 
     # ===== 7. CC filter — area only + FOV overlap =====
-    min_area = max(40, int(np.count_nonzero(proc_mask) * 0.00006))
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(vessel_mask, connectivity=8)
-    cleaned = np.zeros_like(vessel_mask)
-    for i in range(1, num_labels):
-        area = stats[i, cv2.CC_STAT_AREA]
-        
-        # Chỉ giữ lại các component đủ lớn và nằm chủ yếu bên trong proc_mask
-        if area >= min_area:
-            comp_mask = (labels == i)
-            overlap = np.count_nonzero(comp_mask & (proc_mask > 0)) / float(area)
-            if overlap > 0.5:
-                cleaned[comp_mask] = 255
-    vessel_mask = cleaned
+    vessel_mask = _filter_components(vessel_mask, proc_mask, min_area)
 
     # ===== 8. Skeleton + prune =====
     skeleton = skeletonize(vessel_mask > 0).astype(np.uint8) * 255
@@ -287,5 +292,11 @@ def get_enhanced_vessels(img):
         if stats_s[i, cv2.CC_STAT_AREA] >= 12:
             sk_clean[lab_s == i] = 255
     skeleton = sk_clean
+
+    if return_details:
+        details = {
+            "raw_vessel_mask": raw_vessel_mask,
+        }
+        return en_green, vessel_mask, skeleton, img_no_bg, proc_mask, details
 
     return en_green, vessel_mask, skeleton, img_no_bg, proc_mask

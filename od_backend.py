@@ -57,7 +57,7 @@ def _load_one_od_model(seed_dir: str, device: str):
     _inject_lwnet_path()
     from models.get_model import get_arch   # relative import inside models/ resolved by __init__.py
 
-    model = get_arch("wnet", in_c=3, n_classes=1)
+    model = get_arch("wnet", in_c=3, n_classes=3)
     # Set mode to non-'train' so forward() returns a single tensor
     model.mode = "eval"
 
@@ -169,17 +169,20 @@ def detect_optic_disc_deep(
     avg_prob = None
     with torch.no_grad():
         for model in models:
-            out = model(tensor)          # (1, 1, 512, 512) raw logit (mode='eval' → single output)
-            prob = torch.sigmoid(out)
+            out = model(tensor)          # (1, 3, 512, 512) raw logits (mode='eval' → single output)
+            prob = torch.softmax(out, dim=1)
             if avg_prob is None:
                 avg_prob = prob.clone()
             else:
                 avg_prob = avg_prob + prob
 
     avg_prob = avg_prob / len(models)
-    prob_np = avg_prob[0, 0].cpu().numpy()   # (512, 512) float
+    pred = torch.argmax(avg_prob, dim=1)[0].cpu().numpy()
+    prob_np = avg_prob[0].cpu().numpy()
 
-    disc_mask_512 = (prob_np > 0.5).astype(np.uint8) * 255
+    # AutoMorph encoding: class 1 = disc rim, class 2 = cup. For optic disc area,
+    # take the union of disc and cup.
+    disc_mask_512 = ((pred == 1) | (pred == 2)).astype(np.uint8) * 255
 
     # ── Bước cổ điển: phân tích hình thái học ─────────────────────────────────
     # Resize disc mask back to original image resolution
@@ -219,6 +222,8 @@ def detect_optic_disc_deep(
     area_ratio = float(best_area) / max(1.0, expected_area)
     area_score = float(1.0 - min(1.0, abs(area_ratio - 1.0)))
 
-    confidence = float(np.clip(0.55 * circularity + 0.45 * area_score, 0.0, 1.0))
+    prob_disc = prob_np[1] + prob_np[2]
+    mean_prob = float(np.mean(prob_disc[disc_mask_512 > 0])) if np.count_nonzero(disc_mask_512) > 0 else 0.0
+    confidence = float(np.clip(0.40 * circularity + 0.25 * area_score + 0.35 * mean_prob, 0.0, 1.0))
 
     return (cx, cy), radius, confidence, disc_mask_full

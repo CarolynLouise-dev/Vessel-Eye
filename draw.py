@@ -69,20 +69,20 @@ def _build_skeleton_segments(skeleton_bin, binary_mask, en_green,
     if skel_bool.sum() < 5:
         return segments
 
-    _av_predict = None
-    if av_model is not None and img_bgr is not None:
-        try:
-            from av_classifier import predict_av_segment as _fn
-            _av_predict = _fn
-        except ImportError:
-            pass
-
     # Deep A/V pixel masks take priority over SVM classifier
     _use_deep_av = (
         artery_mask is not None and vein_mask is not None
         and artery_mask.shape[:2] == binary_mask.shape
         and vein_mask.shape[:2] == binary_mask.shape
     )
+
+    _av_predict = None
+    if av_model is not None and img_bgr is not None and not _use_deep_av:
+        try:
+            from av_classifier import predict_av_segment as _fn
+            _av_predict = _fn
+        except ImportError:
+            pass
 
     import warnings
     with warnings.catch_warnings():
@@ -98,7 +98,7 @@ def _build_skeleton_segments(skeleton_bin, binary_mask, en_green,
 
     for _, row in stats.iterrows():
         arc_len = float(row[col_arc]) if col_arc in stats.columns else 0.0
-        if arc_len < 30:
+        if arc_len < 12:
             continue
 
         if col_ec and not np.isnan(row[col_ec]):
@@ -129,43 +129,268 @@ def _build_skeleton_segments(skeleton_bin, binary_mask, en_green,
                 continue
 
             if _use_deep_av:
-                h_m, w_m = binary_mask.shape
-                if 0 <= my < h_m and 0 <= mx < w_m:
-                    if artery_mask[my, mx] > 0:
-                        is_artery = True
-                    elif vein_mask[my, mx] > 0:
-                        is_artery = False
-                    else:
-                        avg_int = float(en_green[my, mx]) if 0 <= my < h_m and 0 <= mx < w_m else brightness_threshold
-                        is_artery = avg_int > brightness_threshold
+                art_votes = 0
+                vein_votes = 0
+                overlap_votes = 0
+                for py, px in path:
+                    iy, ix = int(py), int(px)
+                    if 0 <= iy < artery_mask.shape[0] and 0 <= ix < artery_mask.shape[1]:
+                        art = artery_mask[iy, ix] > 0
+                        vein = vein_mask[iy, ix] > 0
+                        if art:
+                            art_votes += 1
+                        if vein:
+                            vein_votes += 1
+                        if art and vein:
+                            overlap_votes += 1
+
+                if art_votes > vein_votes:
+                    is_artery = True
+                elif vein_votes > art_votes:
+                    is_artery = False
                 else:
-                    is_artery = float(en_green[my, mx]) > brightness_threshold
+                    h_m, w_m = en_green.shape
+                    avg_int = float(en_green[my, mx]) if 0 <= my < h_m and 0 <= mx < w_m else brightness_threshold
+                    is_artery = avg_int > brightness_threshold
             elif _av_predict is not None:
                 is_artery = _av_predict(av_model, img_bgr, en_green, binary_mask, path)
             else:
                 h_m, w_m = en_green.shape
                 avg_int = float(en_green[my, mx]) if 0 <= my < h_m and 0 <= mx < w_m else brightness_threshold
                 is_artery = avg_int > brightness_threshold
+
+            segments.append({
+                "cy": my,
+                "cx": mx,
+                "tort": float(tort),
+                "diam": float(diam),
+                "is_artery": bool(is_artery),
+                "path": path,
+                "overlap_votes": int(overlap_votes) if _use_deep_av else 0,
+                "length": float(arc_len),
+            })
         except Exception:
             continue
 
     return segments
 
 
+def _pick_spaced_markers(markers, min_dist=32, max_items=None):
+    selected = []
+    for marker in sorted(markers, key=lambda item: -float(item.get("score", 0.0))):
+        cx = int(marker["cx"])
+        cy = int(marker["cy"])
+        keep = True
+        for prev in selected:
+            if np.hypot(cx - prev["cx"], cy - prev["cy"]) < min_dist:
+                keep = False
+                break
+        if keep:
+            selected.append(marker)
+            if max_items is not None and len(selected) >= max_items:
+                break
+    return selected
+
+
+def _gap_markers(gap_mask, fov_mask=None):
+    if gap_mask is None or np.count_nonzero(gap_mask) == 0:
+        return []
+
+    n_lbl, lbl_img, stats_cc, centroids = cv2.connectedComponentsWithStats(gap_mask, connectivity=8)
+    markers = []
+    for i in range(1, n_lbl):
+        area = int(stats_cc[i, cv2.CC_STAT_AREA])
+        if area < 18:
+            continue
+        cx = int(round(centroids[i][0]))
+        cy = int(round(centroids[i][1]))
+        if fov_mask is not None and not (0 <= cy < fov_mask.shape[0] and 0 <= cx < fov_mask.shape[1] and fov_mask[cy, cx] > 0):
+            continue
+        markers.append({
+            "cx": cx,
+            "cy": cy,
+            "area": area,
+            "radius": max(10, min(26, int(np.sqrt(area) * 1.9))),
+            "score": float(area),
+        })
+    return _pick_spaced_markers(markers, min_dist=28)
+
+
+def _marker_focus_masks(shape, anatomy_details=None):
+    h, w = shape[:2]
+    zone_mask = None
+    exclusion_mask = np.zeros((h, w), dtype=np.uint8)
+    if not anatomy_details:
+        return zone_mask, exclusion_mask
+
+    zone_candidate = anatomy_details.get("zone_b_mask")
+    if zone_candidate is not None and np.shape(zone_candidate)[:2] == (h, w):
+        zone_mask = (zone_candidate > 0).astype(np.uint8) * 255
+
+    od_mask = anatomy_details.get("od_mask")
+    if od_mask is not None and np.shape(od_mask)[:2] == (h, w):
+        exclusion_mask = (od_mask > 0).astype(np.uint8) * 255
+        exclusion_mask = cv2.dilate(exclusion_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (21, 21)), iterations=1)
+    return zone_mask, exclusion_mask
+
+
+def _marker_allowed(cx, cy, fov_mask=None, zone_mask=None, exclusion_mask=None):
+    if fov_mask is not None and (cy < 0 or cx < 0 or cy >= fov_mask.shape[0] or cx >= fov_mask.shape[1] or fov_mask[cy, cx] == 0):
+        return False
+    if exclusion_mask is not None and exclusion_mask.size > 0 and 0 <= cy < exclusion_mask.shape[0] and 0 <= cx < exclusion_mask.shape[1] and exclusion_mask[cy, cx] > 0:
+        return False
+    if zone_mask is not None and zone_mask.size > 0:
+        return 0 <= cy < zone_mask.shape[0] and 0 <= cx < zone_mask.shape[1] and zone_mask[cy, cx] > 0
+    return True
+
+
+def analyze_pathology_findings(skeleton_bin, vessel_mask, en_green,
+                               fov_mask=None, img_bgr=None, av_model=None,
+                               artery_mask=None, vein_mask=None,
+                               anatomy_details=None, raw_vessel_mask=None):
+    findings = {
+        "segments": [],
+        "gap_map": np.zeros_like(vessel_mask, dtype=np.uint8) if vessel_mask is not None else None,
+        "tortuosity": [],
+        "narrowing": [],
+        "dilation": [],
+        "gaps": [],
+        "summary": [],
+    }
+
+    if skeleton_bin is None or vessel_mask is None or en_green is None:
+        return findings
+
+    zone_mask, exclusion_mask = _marker_focus_masks(vessel_mask.shape, anatomy_details=anatomy_details)
+
+    vessel_pixels = en_green[vessel_mask > 0]
+    brightness_threshold = float(np.median(vessel_pixels)) if len(vessel_pixels) > 0 else 128.0
+
+    segments = _build_skeleton_segments(
+        skeleton_bin, vessel_mask, en_green, brightness_threshold,
+        img_bgr=img_bgr, av_model=av_model,
+        artery_mask=artery_mask, vein_mask=vein_mask,
+    )
+    findings["segments"] = segments
+
+    gap_map, _ = feature_extract.get_discontinuity_map(skeleton_bin, vessel_mask, fov_mask, raw_vessel_mask=raw_vessel_mask)
+    findings["gap_map"] = gap_map
+
+    tort_markers = []
+    for seg in segments:
+        if seg["tort"] <= THRESHOLD_TORT_LOCAL:
+            continue
+        if not _marker_allowed(int(seg["cx"]), int(seg["cy"]), fov_mask=fov_mask, zone_mask=zone_mask, exclusion_mask=exclusion_mask):
+            continue
+        tort_markers.append({
+            "type": "Tortuosity",
+            "cx": int(seg["cx"]),
+            "cy": int(seg["cy"]),
+            "score": float(seg["tort"] * max(1.0, seg.get("length", 1.0))),
+            "value": float(seg["tort"]),
+            "diam": float(seg["diam"]),
+        })
+
+    a_diams = [s["diam"] for s in segments if s["is_artery"]]
+    v_diams = [s["diam"] for s in segments if not s["is_artery"]]
+    avg_a = float(np.mean(a_diams)) if a_diams else 4.0
+    avg_v = float(np.mean(v_diams)) if v_diams else 6.0
+    std_a = float(np.std(a_diams)) if len(a_diams) > 1 else 1.0
+    std_v = float(np.std(v_diams)) if len(v_diams) > 1 else 1.5
+
+    narrow_markers = []
+    wide_markers = []
+    for seg in segments:
+        diam = float(seg["diam"])
+        if not _marker_allowed(int(seg["cx"]), int(seg["cy"]), fov_mask=fov_mask, zone_mask=zone_mask, exclusion_mask=exclusion_mask):
+            continue
+        if seg["is_artery"]:
+            narrow_cut = min(avg_a - 0.9 * std_a, avg_v * THRESHOLD_NARROW_LOCAL)
+            if diam < max(1.5, narrow_cut):
+                narrow_markers.append({
+                    "type": "Arterial narrowing",
+                    "cx": int(seg["cx"]),
+                    "cy": int(seg["cy"]),
+                    "score": float(max(0.0, avg_a - diam)),
+                    "value": diam,
+                    "reference": avg_a,
+                })
+            if diam > max(avg_a + 1.2 * std_a, avg_a * 1.45):
+                wide_markers.append({
+                    "type": "Arterial dilation",
+                    "cx": int(seg["cx"]),
+                    "cy": int(seg["cy"]),
+                    "score": float(max(0.0, diam - avg_a)),
+                    "value": diam,
+                    "reference": avg_a,
+                })
+        else:
+            if diam > max(avg_v + 1.2 * std_v, avg_v * 1.35):
+                wide_markers.append({
+                    "type": "Venous dilation",
+                    "cx": int(seg["cx"]),
+                    "cy": int(seg["cy"]),
+                    "score": float(max(0.0, diam - avg_v)),
+                    "value": diam,
+                    "reference": avg_v,
+                })
+
+    gap_markers = []
+    for marker in _gap_markers(gap_map, fov_mask=fov_mask):
+        if not _marker_allowed(int(marker["cx"]), int(marker["cy"]), fov_mask=fov_mask, zone_mask=zone_mask, exclusion_mask=None):
+            continue
+        gap_markers.append({
+            "type": "Discontinuity",
+            "cx": int(marker["cx"]),
+            "cy": int(marker["cy"]),
+            "score": float(marker.get("score", marker.get("area", 0.0))),
+            "value": float(marker.get("area", 0.0)),
+            "radius": int(marker.get("radius", 10)),
+        })
+
+    findings["tortuosity"] = _pick_spaced_markers(tort_markers, min_dist=30, max_items=8)
+    findings["narrowing"] = _pick_spaced_markers(narrow_markers, min_dist=34, max_items=8)
+    findings["dilation"] = _pick_spaced_markers(wide_markers, min_dist=34, max_items=8)
+    findings["gaps"] = _pick_spaced_markers(gap_markers, min_dist=28, max_items=8)
+
+    summary = []
+    for group_name in ("narrowing", "dilation", "tortuosity", "gaps"):
+        for marker in findings[group_name]:
+            summary.append(marker)
+    findings["summary"] = sorted(summary, key=lambda item: -float(item.get("score", 0.0)))[:10]
+    return findings
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # PUBLIC: Panel 1 — Optic Disc Detection
 # ══════════════════════════════════════════════════════════════════════════════
 
-def draw_optic_disc_vis(img_bgr, od_center, od_radius):
-    """Vẽ vòng tròn optic disc và zone B lên ảnh fundus."""
+def draw_optic_disc_vis(img_bgr, od_center, od_radius, zone_b_mask=None, disc_mask=None, confidence=None):
+    """Vẽ optic disc và Zone B lên ảnh fundus."""
     vis = img_bgr.copy()
     cx, cy = int(od_center[0]), int(od_center[1])
     r = int(od_radius)
 
-    # Zone B annular ring (đây là vùng phân tích chính)
-    cv2.circle(vis, (cx, cy), r * 2, (0, 255, 180), 2)
-    # Optic disc boundary
-    cv2.circle(vis, (cx, cy), r, (0, 165, 255), 2)
+    if disc_mask is not None and disc_mask.shape[:2] == vis.shape[:2] and np.count_nonzero(disc_mask) > 0:
+        disc_mask_u8 = (disc_mask > 0).astype(np.uint8) * 255
+        overlay = np.zeros_like(vis)
+        overlay[:, :, 1] = (disc_mask_u8 > 0).astype(np.uint8) * 70
+        overlay[:, :, 2] = (disc_mask_u8 > 0).astype(np.uint8) * 180
+        vis = cv2.addWeighted(vis, 1.0, overlay, 0.28, 0)
+        contours, _ = cv2.findContours(disc_mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if contours:
+            cv2.drawContours(vis, contours, -1, (0, 165, 255), 2, cv2.LINE_AA)
+    else:
+        cv2.circle(vis, (cx, cy), r, (0, 165, 255), 2)
+
+    if zone_b_mask is not None and zone_b_mask.shape[:2] == vis.shape[:2] and np.count_nonzero(zone_b_mask) > 0:
+        zone_mask_u8 = (zone_b_mask > 0).astype(np.uint8) * 255
+        contours, _ = cv2.findContours(zone_mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if contours:
+            cv2.drawContours(vis, contours, -1, (0, 255, 180), 2, cv2.LINE_AA)
+    else:
+        cv2.circle(vis, (cx, cy), r * 2, (0, 255, 180), 2)
+
     # Center dot
     cv2.circle(vis, (cx, cy), 4, (0, 165, 255), -1)
 
@@ -179,6 +404,10 @@ def draw_optic_disc_vis(img_bgr, od_center, od_radius):
     cv2.line(vis, (cx - 8, cy), (cx + 8, cy), (0, 165, 255), 1)
     cv2.line(vis, (cx, cy - 8), (cx, cy + 8), (0, 165, 255), 1)
 
+    if confidence is not None:
+        cv2.putText(vis, f"Conf {confidence * 100:.0f}%", (max(8, cx - 28), cy + r + 18),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (120, 235, 255), 1, cv2.LINE_AA)
+
     return vis
 
 
@@ -190,9 +419,8 @@ def draw_av_calibre_map(skeleton_bin, vessel_mask, en_green,
                         fov_mask=None, img_bgr=None, av_model=None,
                         artery_mask=None, vein_mask=None):
     """
-    Panel 2: Bản đồ đường kính (calibre) A/V trên nền đen.
-    Màu từ xanh → vàng → đỏ biểu thị đường kính từ nhỏ → lớn.
-    Động mạch: nhánh đỏ-cam; Tĩnh mạch: nhánh xanh-lục.
+    Panel 2: Bản đồ phân loại động/tĩnh mạch.
+    Động mạch: đỏ, Tĩnh mạch: xanh dương, Overlap: xanh lá.
     """
     if skeleton_bin is None or vessel_mask is None:
         h, w = vessel_mask.shape if vessel_mask is not None else (512, 512)
@@ -201,10 +429,34 @@ def draw_av_calibre_map(skeleton_bin, vessel_mask, en_green,
     h, w = vessel_mask.shape
     vis = np.zeros((h, w, 3), dtype=np.uint8)
 
-    # Background mờ (outline vessel)
-    vessel_bg = np.zeros((h, w, 3), dtype=np.uint8)
-    vessel_bg[vessel_mask > 0] = (15, 20, 15)
-    vis = cv2.add(vis, vessel_bg)
+    vis[vessel_mask > 0] = (18, 26, 18)
+
+    use_deep_masks = (
+        artery_mask is not None and vein_mask is not None
+        and artery_mask.shape[:2] == vessel_mask.shape
+        and vein_mask.shape[:2] == vessel_mask.shape
+    )
+
+    if use_deep_masks:
+        vessel_bool = vessel_mask > 0
+        art_bool = (artery_mask > 0) & vessel_bool
+        vein_bool = (vein_mask > 0) & vessel_bool
+        overlap_bool = art_bool & vein_bool
+        artery_only = art_bool & ~overlap_bool
+        vein_only = vein_bool & ~overlap_bool
+
+        vis[artery_only] = (40, 40, 235)
+        vis[vein_only] = (235, 120, 40)
+        vis[overlap_bool] = (40, 210, 80)
+
+        vessel_outline = cv2.dilate((vessel_bool.astype(np.uint8) * 255), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)), iterations=1)
+        outline = cv2.Canny(vessel_outline, 40, 120)
+        vis[outline > 0] = (235, 235, 235)
+
+        if fov_mask is not None:
+            vis = cv2.bitwise_and(vis, vis, mask=fov_mask)
+        _draw_legend_av(vis, h, w, has_overlap=True)
+        return vis
 
     if en_green is None or not _SKAN_AVAILABLE:
         # Fallback: chỉ vẽ skeleton trắng
@@ -231,56 +483,40 @@ def draw_av_calibre_map(skeleton_bin, vessel_mask, en_green,
     d_min = max(1.0, float(np.percentile(all_diams, 5)))
     d_max = max(d_min + 1.0, float(np.percentile(all_diams, 95)))
 
-    artery_segs = [s for s in segments if s["is_artery"]]
-    vein_segs = [s for s in segments if not s["is_artery"]]
-
-    def draw_segment_calibre(seg, palette_offset=0.0):
-        """Vẽ từng điểm trên path với màu theo đường kính."""
+    for seg in segments:
         path = seg["path"]
         diam_norm = np.clip((seg["diam"] - d_min) / (d_max - d_min + 1e-6), 0.0, 1.0)
-
-        # Artery: dải màu warm (đỏ-cam-vàng); Vein: dải màu cool (xanh-tím-lam)
-        if seg["is_artery"]:
-            # Jet shifted to warm: 0.5→1.0
-            norm_shifted = 0.5 + diam_norm * 0.5
-        else:
-            # Jet shifted to cool: 0.0→0.5
-            norm_shifted = diam_norm * 0.5
-
-        color = _apply_colormap_jet(norm_shifted)
-
-        # Độ dày nét vẽ theo đường kính
-        thickness = max(1, min(4, int(seg["diam"] / 3)))
+        base = np.array((30, 30, 230) if seg["is_artery"] else (230, 120, 30), dtype=np.float32)
+        boost = np.array((0, 0, 25) if seg["is_artery"] else (25, 20, 0), dtype=np.float32) * diam_norm
+        color = tuple(np.clip(base + boost, 0, 255).astype(np.uint8).tolist())
+        thickness = max(1, min(5, int(round(seg["diam"] / 2.5))))
         pts = [(int(pt[1]), int(pt[0])) for pt in path]
         for i in range(len(pts) - 1):
             cv2.line(vis, pts[i], pts[i + 1], color, thickness, cv2.LINE_AA)
 
-    for seg in artery_segs:
-        draw_segment_calibre(seg)
-    for seg in vein_segs:
-        draw_segment_calibre(seg)
-
     if fov_mask is not None:
         vis = cv2.bitwise_and(vis, vis, mask=fov_mask)
 
-    # Thêm nhãn nhỏ A/V
-    _draw_legend_av(vis, h, w)
+    _draw_legend_av(vis, h, w, has_overlap=False)
 
     return vis
 
 
-def _draw_legend_av(vis, h, w):
+def _draw_legend_av(vis, h, w, has_overlap=False):
     """Vẽ legend nhỏ tại góc ảnh."""
-    x0, y0 = 8, h - 48
-    cv2.rectangle(vis, (x0 - 2, y0 - 2), (x0 + 110, y0 + 40), (30, 30, 30), -1)
-    # Artery sample
-    cv2.line(vis, (x0, y0 + 8), (x0 + 20, y0 + 8), (0, 80, 255), 3)
-    cv2.putText(vis, "Artery (A)", (x0 + 24, y0 + 12),
+    box_h = 58 if has_overlap else 40
+    x0, y0 = 8, h - (box_h + 10)
+    cv2.rectangle(vis, (x0 - 2, y0 - 2), (x0 + 116, y0 + box_h), (30, 30, 30), -1)
+    cv2.line(vis, (x0, y0 + 8), (x0 + 20, y0 + 8), (30, 30, 230), 3)
+    cv2.putText(vis, "Artery", (x0 + 24, y0 + 12),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 180, 180), 1, cv2.LINE_AA)
-    # Vein sample
-    cv2.line(vis, (x0, y0 + 28), (x0 + 20, y0 + 28), (255, 120, 30), 3)
-    cv2.putText(vis, "Vein (V)", (x0 + 24, y0 + 32),
+    cv2.line(vis, (x0, y0 + 28), (x0 + 20, y0 + 28), (230, 120, 30), 3)
+    cv2.putText(vis, "Vein", (x0 + 24, y0 + 32),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.35, (180, 200, 180), 1, cv2.LINE_AA)
+    if has_overlap:
+        cv2.line(vis, (x0, y0 + 48), (x0 + 20, y0 + 48), (40, 210, 80), 3)
+        cv2.putText(vis, "Overlap", (x0 + 24, y0 + 52),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (180, 220, 180), 1, cv2.LINE_AA)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -327,12 +563,11 @@ def draw_discontinuity_map(skeleton, vessel_mask, fov_mask):
         cy_g = int(centroids[i][1])
         gap_centers.append((cx_g, cy_g, area))
 
-    # 5. Chỉ khoanh vòng tròn TOP-8 gap lớn nhất và đủ lớn (tránh nhiễu thị giác)
     gap_centers.sort(key=lambda x: -x[2])
-    for (gx, gy, area) in gap_centers[:8]:
-        if area < 40:
+    for (gx, gy, area) in gap_centers:
+        if area < 18:
             continue
-        r = max(8, min(20, int(np.sqrt(area) * 1.6)))
+        r = max(8, min(22, int(np.sqrt(area) * 1.6)))
         cv2.circle(vis, (gx, gy), r + 4, (0, 140, 255), 2, cv2.LINE_AA)
         cv2.circle(vis, (gx, gy), r, (0, 60, 220), 1, cv2.LINE_AA)
         cv2.circle(vis, (gx, gy), 3, (0, 200, 255), -1)
@@ -357,12 +592,82 @@ def draw_discontinuity_map(skeleton, vessel_mask, fov_mask):
 
 
 def draw_structural_map(skeleton, vessel_mask, en_green=None, fov_mask=None, img_bgr=None, av_model=None,
-                        artery_mask=None, vein_mask=None):
+                        artery_mask=None, vein_mask=None, raw_vessel_mask=None):
     """
-    Panel 3: Bản đồ Cấu trúc — skeleton + gap/endpoint markers.
-    Hiện tại được triển khai trên cùng logic với draw_discontinuity_map.
+    Panel 3: Bản đồ Cấu trúc — vừa hiển thị xoắn vặn vừa hiển thị đứt đoạn.
     """
-    return draw_discontinuity_map(skeleton, vessel_mask, fov_mask)
+    h, w = vessel_mask.shape
+    vis = np.zeros((h, w, 3), dtype=np.uint8)
+    vis[vessel_mask > 0] = (14, 20, 14)
+
+    if skeleton is None:
+        return vis
+
+    sk = (skeleton > 0).astype(np.uint8) * 255
+    if np.count_nonzero(sk) == 0:
+        return vis
+
+    sk_disp = cv2.dilate(sk, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2)), iterations=1)
+    vis[sk_disp > 0] = (0, 185, 60)
+
+    brightness_threshold = 128.0
+    if en_green is not None:
+        vessel_pixels = en_green[vessel_mask > 0]
+        if len(vessel_pixels) > 0:
+            brightness_threshold = float(np.median(vessel_pixels))
+
+    segments = _build_skeleton_segments(
+        skeleton, vessel_mask, en_green if en_green is not None else np.zeros_like(vessel_mask),
+        brightness_threshold,
+        img_bgr=img_bgr, av_model=av_model,
+        artery_mask=artery_mask, vein_mask=vein_mask,
+    ) if en_green is not None else []
+
+    tort_markers = []
+    for seg in segments:
+        if seg["tort"] <= THRESHOLD_TORT_LOCAL:
+            continue
+        pts = [(int(pt[1]), int(pt[0])) for pt in seg["path"]]
+        for i in range(len(pts) - 1):
+            cv2.line(vis, pts[i], pts[i + 1], (0, 255, 90), 2, cv2.LINE_AA)
+        tort_markers.append({
+            "cx": seg["cx"],
+            "cy": seg["cy"],
+            "score": seg["tort"] * seg.get("length", 1.0),
+            "tort": seg["tort"],
+        })
+
+    for marker in _pick_spaced_markers(tort_markers, min_dist=30, max_items=10):
+        cx = int(marker["cx"])
+        cy = int(marker["cy"])
+        cv2.circle(vis, (cx, cy), 15, (0, 255, 100), 2, cv2.LINE_AA)
+        cv2.putText(vis, "XOAN", (cx + 16, cy - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.33, (80, 255, 120), 1, cv2.LINE_AA)
+
+    gap_mask, _ = feature_extract.get_discontinuity_map(skeleton, vessel_mask, fov_mask, raw_vessel_mask=raw_vessel_mask)
+    vis[gap_mask > 0] = (30, 145, 255)
+    for marker in _gap_markers(gap_mask, fov_mask=fov_mask):
+        cx = int(marker["cx"])
+        cy = int(marker["cy"])
+        radius = int(marker["radius"])
+        cv2.circle(vis, (cx, cy), radius, (0, 165, 255), 2, cv2.LINE_AA)
+        cv2.circle(vis, (cx, cy), max(4, radius - 6), (0, 210, 255), 1, cv2.LINE_AA)
+        cv2.putText(vis, "GAP", (cx + radius + 2, cy + 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.33, (0, 220, 255), 1, cv2.LINE_AA)
+
+    endpoint = feature_extract._compute_endpoint_map(skeleton, fov_mask)
+    endpoint_near_gap = cv2.bitwise_and(
+        endpoint,
+        cv2.dilate(gap_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (13, 13)), iterations=1),
+    )
+    ys, xs = np.where(endpoint_near_gap > 0)
+    for ey, ex in zip(ys[:300], xs[:300]):
+        cv2.circle(vis, (int(ex), int(ey)), 3, (0, 255, 220), 1, cv2.LINE_AA)
+
+    if fov_mask is not None:
+        vis = cv2.bitwise_and(vis, vis, mask=fov_mask)
+
+    return vis
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -431,7 +736,8 @@ def draw_vessel_segmentation(vessel_mask, en_green=None, fov_mask=None):
 
 def draw_diameter_heatmap(skeleton_bin, vessel_mask, en_green,
                           fov_mask=None, img_bgr=None, av_model=None,
-                          artery_mask=None, vein_mask=None):
+                          artery_mask=None, vein_mask=None,
+                          anatomy_details=None, raw_vessel_mask=None):
     """
     Panel 4: Mỗi điểm trên skeleton được tô màu theo đường kính thực đo.
     Xanh = mạch nhỏ/hẹp bất thường, Vàng = bình thường, Đỏ = phồng/giãn bất thường.
@@ -474,24 +780,24 @@ def draw_diameter_heatmap(skeleton_bin, vessel_mask, en_green,
     std_a = float(np.std(a_diams)) if len(a_diams) > 1 else 1.0
     std_v = float(np.std(v_diams)) if len(v_diams) > 1 else 1.5
 
-    narrow_markers = []   # (cx, cy) điểm hẹp bất thường
-    wide_markers = []     # (cx, cy) điểm phồng bất thường
+    narrow_markers = []
+    wide_markers = []
+    zone_mask, exclusion_mask = _marker_focus_masks(vessel_mask.shape, anatomy_details=anatomy_details)
 
     for seg in segments:
         path = seg["path"]
         diam = seg["diam"]
         is_artery = seg["is_artery"]
+        marker_ok = _marker_allowed(int(seg["cx"]), int(seg["cy"]), fov_mask=fov_mask, zone_mask=zone_mask, exclusion_mask=exclusion_mask)
 
         # Issue 5: Narrow/Swollen absolute threshold vs V_mean
         if is_artery:
-            # HẸP ĐỘNG MẠCH: nhỏ hơn ngưỡng trung bình vein * THRESHOLD_NARROW_LOCAL (0.5)
-            is_narrow = diam < (avg_v * THRESHOLD_NARROW_LOCAL)
-            # PHỒNG ĐỘNG MẠCH: Lớn gấp rưỡi artery trung bình
-            is_wide = diam > (avg_a * 1.5)
+            narrow_cut = min(avg_a - 0.9 * std_a, avg_v * THRESHOLD_NARROW_LOCAL)
+            is_narrow = diam < max(1.5, narrow_cut)
+            is_wide = diam > max(avg_a + 1.2 * std_a, avg_a * 1.45)
         else:
-            # Tĩnh mạch không hẹp theo dạng này, chỉ xét PHỒNG
             is_narrow = False
-            is_wide = diam > (avg_v * 1.5)
+            is_wide = diam > max(avg_v + 1.2 * std_v, avg_v * 1.35)
 
         # Normalize diameter cho màu: 0=hẹp nhất (xanh), 1=rộng nhất (đỏ)
         ref_mean = avg_a if is_artery else avg_v
@@ -507,31 +813,30 @@ def draw_diameter_heatmap(skeleton_bin, vessel_mask, en_green,
 
         # Ghi nhận vị trí bất thường
         cx_s, cy_s = seg["cx"], seg["cy"]
-        if is_narrow:
-            narrow_markers.append((cx_s, cy_s, diam))
-        if is_wide:
-            wide_markers.append((cx_s, cy_s, diam))
+        if is_narrow and marker_ok:
+            narrow_markers.append({"cx": cx_s, "cy": cy_s, "diam": diam, "score": max(0.0, avg_a - diam)})
+        if is_wide and marker_ok:
+            wide_markers.append({"cx": cx_s, "cy": cy_s, "diam": diam, "score": max(0.0, diam - (avg_a if is_artery else avg_v))})
 
-    # Vẽ marker HẸP: vòng kép đỏ sáng
-    for (mx, my, diam) in narrow_markers:
+    for marker in _pick_spaced_markers(narrow_markers, min_dist=34, max_items=10):
+        mx, my, diam = int(marker["cx"]), int(marker["cy"]), float(marker["diam"])
         if not (0 <= my < h and 0 <= mx < w):
             continue
         if fov_mask is not None and fov_mask[my, mx] == 0:
             continue
         cv2.circle(vis, (mx, my), 16, (0, 50, 255), 2, cv2.LINE_AA)
         cv2.circle(vis, (mx, my), 22, (0, 100, 255), 1, cv2.LINE_AA)
-        # Label ngắn
-        cv2.putText(vis, "HEP", (mx + 14, my - 8),
+        cv2.putText(vis, f"HEP {diam:.1f}px", (mx + 14, my - 8),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.32, (80, 150, 255), 1, cv2.LINE_AA)
 
-    # Vẽ marker PHỒNG: vòng vàng
-    for (mx, my, diam) in wide_markers:
+    for marker in _pick_spaced_markers(wide_markers, min_dist=34, max_items=10):
+        mx, my, diam = int(marker["cx"]), int(marker["cy"]), float(marker["diam"])
         if not (0 <= my < h and 0 <= mx < w):
             continue
         if fov_mask is not None and fov_mask[my, mx] == 0:
             continue
         cv2.circle(vis, (mx, my), 18, (0, 220, 255), 2, cv2.LINE_AA)
-        cv2.putText(vis, "PHONG", (mx + 14, my + 8),
+        cv2.putText(vis, f"PHONG {diam:.1f}px", (mx + 14, my + 8),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.30, (0, 220, 200), 1, cv2.LINE_AA)
 
     if fov_mask is not None:
@@ -559,7 +864,8 @@ def draw_diameter_heatmap(skeleton_bin, vessel_mask, en_green,
 def draw_feature_map(img_disp, vessel_mask, en_green, regions,
                      img_no_bg=None, fov_mask=None, skeleton=None,
                      img_bgr=None, av_model=None, return_debug=False,
-                     anatomy_details=None, artery_mask=None, vein_mask=None):
+                     anatomy_details=None, artery_mask=None, vein_mask=None,
+                     raw_vessel_mask=None):
     """
     Bản đồ lâm sàng tổng hợp:
     - Nền: ảnh fundus làm mờ (để marker nổi bật hơn)
@@ -591,7 +897,14 @@ def draw_feature_map(img_disp, vessel_mask, en_green, regions,
         return result_img
 
     brightness_threshold = np.median(vessel_pixels)
-    gap_map, discontinuity_score = feature_extract.get_discontinuity_map(skeleton, vessel_mask, fov_mask)
+    findings = analyze_pathology_findings(
+        skeleton, vessel_mask, en_green,
+        fov_mask=fov_mask, img_bgr=img_bgr, av_model=av_model,
+        artery_mask=artery_mask, vein_mask=vein_mask,
+        anatomy_details=anatomy_details,
+        raw_vessel_mask=raw_vessel_mask,
+    )
+    gap_map = findings.get("gap_map", np.zeros((h, w), dtype=np.uint8))
 
     if _SKAN_AVAILABLE and skeleton is not None:
         segments = _build_skeleton_segments(
@@ -609,12 +922,25 @@ def draw_feature_map(img_disp, vessel_mask, en_green, regions,
 
             # Map A/V màu lên ảnh
             color_mask = np.zeros((h, w, 3), dtype=np.uint8)
-            for seg in segments:
-                color = (0, 0, 220) if seg["is_artery"] else (220, 60, 0)
-                for pt in seg["path"]:
-                    py, px = int(pt[0]), int(pt[1])
-                    if 0 <= py < h and 0 <= px < w:
-                        color_mask[py, px] = color
+            use_deep_masks = (
+                artery_mask is not None and vein_mask is not None
+                and artery_mask.shape[:2] == vessel_mask.shape
+                and vein_mask.shape[:2] == vessel_mask.shape
+            )
+            if use_deep_masks:
+                art = (artery_mask > 0) & (vessel_mask > 0)
+                vein = (vein_mask > 0) & (vessel_mask > 0)
+                overlap = art & vein
+                color_mask[art & ~overlap] = (0, 0, 220)
+                color_mask[vein & ~overlap] = (220, 60, 0)
+                color_mask[overlap] = (0, 210, 90)
+            else:
+                for seg in segments:
+                    color = (0, 0, 220) if seg["is_artery"] else (220, 60, 0)
+                    for pt in seg["path"]:
+                        py, px = int(pt[0]), int(pt[1])
+                        if 0 <= py < h and 0 <= px < w:
+                            color_mask[py, px] = color
 
             color_mask = cv2.bitwise_and(color_mask, color_mask, mask=fov_mask)
             # Dày mạch lên để nhìn rõ hơn
@@ -625,36 +951,33 @@ def draw_feature_map(img_disp, vessel_mask, en_green, regions,
             # ── Danger zone: cluster markers ──────────────────────────────────
             danger_map = np.zeros((h, w), dtype=np.uint8)
 
-            for seg in segments:
-                cy_s, cx_s = seg["cy"], seg["cx"]
-                if not (0 <= cy_s < h and 0 <= cx_s < w):
-                    continue
-                if fov_mask[cy_s, cx_s] == 0:
-                    continue
+            for marker in findings.get("tortuosity", [])[:6]:
+                cy_s, cx_s = int(marker["cy"]), int(marker["cx"])
+                cv2.circle(result_img, (cx_s, cy_s), 18, (0, 255, 80), 2, cv2.LINE_AA)
+                cv2.circle(sign_img, (cx_s, cy_s), 18, (0, 255, 80), 2, cv2.LINE_AA)
+                cv2.putText(result_img, f"XOAN {float(marker['value']):.1f}",
+                            (cx_s + 20, cy_s - 6),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 255, 80), 1, cv2.LINE_AA)
+                cv2.circle(danger_map, (cx_s, cy_s), 28, 55, -1)
 
-                # ── Marker XOẮN VẶN (Tortuosity) ─────────────────────────
-                if seg["tort"] > THRESHOLD_TORT_LOCAL:
-                    # Vòng xanh lá sáng
-                    cv2.circle(result_img, (cx_s, cy_s), 18, (0, 255, 80), 2, cv2.LINE_AA)
-                    cv2.circle(sign_img, (cx_s, cy_s), 18, (0, 255, 80), 2, cv2.LINE_AA)
-                    cv2.putText(result_img, f"XOAN {seg['tort']:.1f}",
-                                (cx_s + 20, cy_s - 6),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 255, 80), 1, cv2.LINE_AA)
-                    cv2.circle(danger_map, (cx_s, cy_s), 30, 60, -1)
+            for marker in findings.get("narrowing", [])[:6]:
+                cy_s, cx_s = int(marker["cy"]), int(marker["cx"])
+                cv2.circle(result_img, (cx_s, cy_s), 20, (0, 60, 255), 2, cv2.LINE_AA)
+                cv2.circle(result_img, (cx_s, cy_s), 28, (0, 120, 255), 1, cv2.LINE_AA)
+                cv2.circle(sign_img, (cx_s, cy_s), 20, (0, 60, 255), 2, cv2.LINE_AA)
+                cv2.putText(result_img, f"HEP {float(marker['value']):.1f}px",
+                            (cx_s + 22, cy_s + 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.38, (80, 150, 255), 1, cv2.LINE_AA)
+                cv2.circle(danger_map, (cx_s, cy_s), 34, 80, -1)
 
-                # ── Marker HẸP ĐỘNG MẠCH (Narrowing) ─────────────────────
-                if seg["is_artery"] and avg_v_diam > 0:
-                    narrow_thresh = THRESHOLD_NARROW_LOCAL
-                    ratio = seg["diam"] / max(1.0, avg_v_diam)
-                    if ratio < narrow_thresh:
-                        # Vòng kép đỏ-cam
-                        cv2.circle(result_img, (cx_s, cy_s), 20, (0, 60, 255), 2, cv2.LINE_AA)
-                        cv2.circle(result_img, (cx_s, cy_s), 28, (0, 120, 255), 1, cv2.LINE_AA)
-                        cv2.circle(sign_img, (cx_s, cy_s), 20, (0, 60, 255), 2, cv2.LINE_AA)
-                        cv2.putText(result_img, f"HEP {seg['diam']}px",
-                                    (cx_s + 22, cy_s + 10),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (80, 150, 255), 1, cv2.LINE_AA)
-                        cv2.circle(danger_map, (cx_s, cy_s), 35, 80, -1)
+            for marker in findings.get("dilation", [])[:5]:
+                cy_s, cx_s = int(marker["cy"]), int(marker["cx"])
+                cv2.circle(result_img, (cx_s, cy_s), 18, (0, 220, 255), 2, cv2.LINE_AA)
+                cv2.circle(sign_img, (cx_s, cy_s), 18, (0, 220, 255), 2, cv2.LINE_AA)
+                cv2.putText(result_img, f"PHONG {float(marker['value']):.1f}px",
+                            (cx_s + 20, cy_s + 8),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.34, (0, 220, 200), 1, cv2.LINE_AA)
+                cv2.circle(danger_map, (cx_s, cy_s), 30, 65, -1)
 
             # ── Overlay gap đứt đoạn (cam) ────────────────────────────────
             gap_overlay = np.zeros_like(result_img, dtype=np.uint8)
@@ -663,15 +986,10 @@ def draw_feature_map(img_disp, vessel_mask, en_green, regions,
             result_img = cv2.addWeighted(result_img, 1.0, gap_overlay, 0.55, 0)
 
             # ── Vòng tròn ĐỨT ĐOẠN ────────────────────────────────────────
-            n_lbl_g, lbl_g, stats_g, cents_g = cv2.connectedComponentsWithStats(
-                gap_map, connectivity=8)
-            for i in range(1, n_lbl_g):
-                area_g = stats_g[i, cv2.CC_STAT_AREA]
-                if area_g < 20:
-                    continue
-                gx_c = int(cents_g[i][0])
-                gy_c = int(cents_g[i][1])
-                r_g = max(12, min(26, int(np.sqrt(area_g) * 2.0)))
+            for marker in findings.get("gaps", [])[:6]:
+                gx_c = int(marker["cx"])
+                gy_c = int(marker["cy"])
+                r_g = int(marker.get("radius", 14))
                 cv2.circle(result_img, (gx_c, gy_c), r_g, (0, 160, 255), 2, cv2.LINE_AA)
                 cv2.circle(sign_img, (gx_c, gy_c), r_g, (0, 160, 255), 2, cv2.LINE_AA)
                 cv2.putText(result_img, "DUT",

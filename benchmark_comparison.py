@@ -58,13 +58,14 @@ def _run_classical(img_bgr, av_model):
     """Run full classical pipeline; return (feats, mask, en, skel, fov, img_r, time_s)."""
     img_r = input_data.standardize_fundus_image(img_bgr, IMG_SIZE)
     t0 = time.perf_counter()
-    en, mask, skel, _, fov = riched_image.get_enhanced_vessels(img_r)
+    en, mask, skel, _, fov, pipe_details = riched_image.get_enhanced_vessels(img_r, return_details=True)
     t_proc = time.perf_counter() - t0
     feats, _, det = feature_extract.extract_features(
         mask, en,
         skeleton=skel, img_bgr=img_r,
         av_model=av_model, fov_mask=fov,
         return_details=True,
+        raw_vessel_mask=pipe_details.get("raw_vessel_mask"),
     )
     return feats, mask, en, skel, fov, img_r, float(t_proc)
 
@@ -76,7 +77,7 @@ def _run_deep(img_bgr, av_model, deep_models, device, img_r=None):
         img_r = input_data.standardize_fundus_image(img_bgr, IMG_SIZE)
 
     # Classical pass for FOV mask + enhanced green
-    en, _, _, img_no_bg, fov = riched_image.get_enhanced_vessels(img_r)
+    en, _, _, img_no_bg, fov, _pipe_details = riched_image.get_enhanced_vessels(img_r, return_details=True)
 
     t0 = time.perf_counter()
     vessel_mask, prob_map = deep_backend.segment_vessels_deep(img_r, deep_models, device=device)
@@ -101,6 +102,7 @@ def _run_deep(img_bgr, av_model, deep_models, device, img_r=None):
         skeleton=skel, img_bgr=img_r,
         av_model=av_model, fov_mask=fov,
         return_details=True,
+        raw_vessel_mask=vessel_mask,
     )
     return feats, vessel_mask, en, skel, fov, img_r, float(t_proc)
 
