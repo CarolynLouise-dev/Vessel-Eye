@@ -215,6 +215,12 @@ class StrokeApp(QMainWindow):
         self.model_metadata = model_metadata.load_model_metadata()
         self.initUI()
 
+    def _set_selected_image_name(self, file_path=None):
+        if not file_path:
+            self.lbl_selected_name.setText("Ảnh đã chọn: chưa có")
+            return
+        self.lbl_selected_name.setText(f"Ảnh đã chọn: {os.path.basename(file_path)}")
+
     def _set_backend_choice(self, backend_name):
         for index in range(self.cbo_backend.count()):
             if self.cbo_backend.itemData(index) == backend_name:
@@ -255,6 +261,14 @@ class StrokeApp(QMainWindow):
             "border: 2px dashed #334155; border-radius: 12px; background: #1e293b; color: #94a3b8;")
         self.lbl_orig.setAlignment(Qt.AlignmentFlag.AlignCenter)
         side_panel.addWidget(self.lbl_orig)
+
+        self.lbl_selected_name = QLabel()
+        self.lbl_selected_name.setWordWrap(True)
+        self.lbl_selected_name.setStyleSheet(
+            "color: #cbd5e1; font-size: 11px; padding: 4px 2px 0 2px; border: none;"
+        )
+        self._set_selected_image_name()
+        side_panel.addWidget(self.lbl_selected_name)
 
         lbl_clinical_t = QLabel("🗺  BẢN ĐỒ LÂM SÀNG")
         lbl_clinical_t.setStyleSheet(
@@ -559,10 +573,8 @@ class StrokeApp(QMainWindow):
         backend_note_suffix = None
 
         if backend_expected in {"classical", "automorph"} and backend_requested != backend_expected:
-            backend_to_use = backend_expected
-            self._set_backend_choice(backend_expected)
             backend_note_suffix = (
-                f"Model ML hiện tại được train với backend {backend_expected}, nên app đã tự đồng bộ backend để tránh lệch feature."
+                f"Model ML hiện tại được train với backend {backend_expected}, nhưng bạn đang chạy {backend_requested}; kết quả vẫn được tính theo backend bạn chọn và nên đọc thận trọng vì feature distribution có thể lệch."
             )
 
         if backend_to_use == "automorph":
@@ -628,6 +640,11 @@ class StrokeApp(QMainWindow):
 
         try:
             img_raw = cv2.imread(file_path)
+            if img_raw is None:
+                self._set_selected_image_name()
+                raise ValueError("Không đọc được file ảnh đã chọn.")
+
+            self._set_selected_image_name(file_path)
             img_disp = input_data.standardize_fundus_image(img_raw, IMG_SIZE)
 
             # ── Pipeline xử lý ảnh ──
@@ -922,7 +939,11 @@ class StrokeApp(QMainWindow):
                 review_needed = (
                     quality_action != "proceed" or
                     od_confidence < 0.40 or
-                    backend_result["backend_used"] != backend_result["backend_requested"]
+                    backend_result["backend_used"] != backend_result["backend_requested"] or
+                    (
+                        backend_result["backend_expected"] in {"classical", "automorph"}
+                        and backend_result["backend_used"] != backend_result["backend_expected"]
+                    )
                 )
 
                 msg = f"<h2 style='color:{color};'>{status} ({prob * 100:.1f}%)</h2>"
